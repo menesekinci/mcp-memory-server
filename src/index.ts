@@ -1,25 +1,27 @@
-import { initDb } from './db.ts';
-import { startIndexer } from './indexer.ts';
-import { indexGitHistory } from './git-parser.ts';
-import { installGitHooks } from './git-hooks.ts';
-import { runServer } from './server.ts';
+import { initDb } from './db';
+import { startIndexer } from './indexer';
+import { indexGitHistory } from './git-parser';
+import { installGitHooks } from './git-hooks';
+import { runServer } from './server';
 import path from 'path';
-import os from 'os';
 import fs from 'fs';
 
 async function bootstrap() {
     initDb();
 
-    const projectPath = process.env.PROJECT_PATH || path.join(os.homedir(), 'Documents', 'test-project');
+    const projectPath = process.env.PROJECT_PATH || process.cwd();
     
     if (!fs.existsSync(projectPath)) {
-        fs.mkdirSync(projectPath, { recursive: true });
-        fs.writeFileSync(path.join(projectPath, 'test.ts'), 'function calculateTotal() { return 100; }\nfunction main() { calculateTotal(); }');
+        throw new Error(`PROJECT_PATH does not exist: ${projectPath}`);
     }
 
-    indexGitHistory(projectPath);
-    installGitHooks(projectPath);
-    startIndexer(projectPath);
+    const projectId = process.env.PROJECT_ID || path.basename(projectPath) || 'default';
+
+    indexGitHistory(projectPath, projectId);
+    if (process.env.INSTALL_GIT_HOOKS === '1') {
+        installGitHooks(projectPath);
+    }
+    startIndexer(projectPath, projectId);
     await runServer();
 }
 

@@ -1,23 +1,53 @@
 {
-  "name": "mcp-memory-server",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "codex-mcp-memory-server",
+  "version": "0.1.0",
+  "description": "Symbol-aware MCP memory server for Codex and coding agents",
+  "main": "dist/src/index.js",
+  "bin": {
+    "codex-mcp-memory-server": "bin/codex-mcp-memory-server.js",
+    "mcp-memory-server": "bin/codex-mcp-memory-server.js"
+  },
+  "files": [
+    "bin",
+    "dist/src",
+    "README.md",
+    "AGENTS.md"
+  ],
   "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "start": "ts-node src/index.ts",
     "test:faz0": "ts-node test-faz0.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test:integration": "ts-node test-integration.ts",
+    "test": "npm run typecheck && npm run test:faz0 && npm run test:integration",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm test"
   },
-  "keywords": [],
+  "keywords": [
+    "mcp",
+    "codex",
+    "memory",
+    "tree-sitter",
+    "sqlite",
+    "agent"
+  ],
   "author": "",
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/menesekinci/mcp-memory-server.git"
+  },
+  "homepage": "https://github.com/menesekinci/mcp-memory-server#readme",
+  "bugs": {
+    "url": "https://github.com/menesekinci/mcp-memory-server/issues"
+  },
   "type": "commonjs",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^12.9.0",
     "chokidar": "^5.0.0",
     "tree-sitter": "^0.21.1",
-    "tree-sitter-python": "^0.25.0",
+    "tree-sitter-python": "^0.21.0",
     "tree-sitter-typescript": "^0.23.2",
     "uuid": "^14.0.0"
   },

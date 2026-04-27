@@ -3,7 +3,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 
-const DB_PATH = path.join(os.homedir(), '.mcp-memory-server', 'memory.db');
+const DB_PATH = process.env.MCP_MEMORY_DB_PATH || path.join(os.homedir(), '.mcp-memory-server', 'memory.db');
 
 const dir = path.dirname(DB_PATH);
 if (!fs.existsSync(dir)) {
@@ -11,6 +11,7 @@ if (!fs.existsSync(dir)) {
 }
 
 const db = new Database(DB_PATH);
+db.pragma('foreign_keys = ON');
 
 export function initDb() {
     db.exec(`
@@ -117,8 +118,11 @@ export function initDb() {
 
         CREATE INDEX IF NOT EXISTS idx_symbols_project ON symbols(project_id);
         CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
+        CREATE INDEX IF NOT EXISTS idx_symbols_project_name ON symbols(project_id, name);
+        CREATE INDEX IF NOT EXISTS idx_files_project_path ON files(project_id, path);
         CREATE INDEX IF NOT EXISTS idx_history_symbol ON symbol_history(symbol_id);
         CREATE INDEX IF NOT EXISTS idx_history_commit ON symbol_history(commit_sha);
+        CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
     `);
 }
 

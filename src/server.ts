@@ -4,9 +4,11 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import db from "./db.ts";
+import db from "./db";
 import { v4 as uuidv4 } from 'uuid';
-import { resolveSymbolReferences } from "./symbol-resolver.ts";
+import crypto from 'crypto';
+import { resolveSymbolReferences } from "./symbol-resolver";
+import { CountRow, DecisionRow, MessageRow, SessionRow, SymbolReference, SymbolRow } from "./types";
 
 const server = new Server(
   {
@@ -20,19 +22,48 @@ const server = new Server(
   }
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+export async function listTools() {
   return {
     tools: [
       {
         name: "lookup_symbol",
-        description: "Find a symbol by its name with detailed info",
+        description: "Find symbols by exact name. Returns compact results by default; pass verbose=true for metadata or include_body=true for full bodies.",
         inputSchema: {
           type: "object",
           properties: {
             name: { type: "string" },
-            project_id: { type: "string", default: "default" }
+            project_id: { type: "string", default: "default" },
+            include_body: { type: "boolean", default: false },
+            verbose: { type: "boolean", default: false }
           },
           required: ["name"],
+        },
+      },
+      {
+        name: "search_symbols",
+        description: "Search symbols by partial name, kind, or file path and return compact results",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+            project_id: { type: "string", default: "default" },
+            kind: { type: "string" },
+            limit: { type: "number", default: 20 },
+            verbose: { type: "boolean", default: false }
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "get_symbol_body",
+        description: "Get the full body for a symbol by symbol_id",
+        inputSchema: {
+          type: "object",
+          properties: {
+            symbol_id: { type: "string" },
+            ref: { type: "string" },
+            project_id: { type: "string", default: "default" }
+          },
         },
       },
       {
@@ -42,7 +73,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             symbol_id: { type: "string" },
-            limit: { type: "number", default: 10 }
+            limit: { type: "number", default: 10 },
+            include_body: { type: "boolean", default: false }
           },
           required: ["symbol_id"],
         },
@@ -186,31 +218,84 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
     ],
   };
-});
+}
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+server.setRequestHandler(ListToolsRequestSchema, listTools);
+
+export async function callTool(name: string, rawArgs: Record<string, any> = {}) {
+  const args = rawArgs;
 
   if (name === "lookup_symbol") {
-    const projectName = args?.project_id || 'default';
-    const symbolName = args?.name;
-    const symbols = db.prepare("SELECT * FROM symbols WHERE name = ? AND project_id = ?").all(symbolName, projectName);
+    const projectName = args.project_id || 'default';
+    const symbolName = args.name;
+    const symbols = db.prepare("SELECT * FROM symbols WHERE name = ? AND project_id = ? AND is_deleted = 0").all(symbolName, projectName) as SymbolRow[];
     return {
-      content: [{ type: "text", text: JSON.stringify(symbols) }],
+      content: [{ type: "text", text: JSON.stringify(symbols.map(symbol => formatSymbol(symbol, {
+        includeBody: Boolean(args.include_body),
+        verbose: Boolean(args.verbose || args.include_body)
+      }))) }],
+    };
+  }
+
+  if (name === "search_symbols") {
+    const projectName = args.project_id || 'default';
+    const query = `%${args.query || ''}%`;
+    const limit = args.limit || 20;
+    const kind = args.kind;
+    const sql = kind
+      ? `SELECT * FROM symbols WHERE project_id = ? AND is_deleted = 0 AND kind = ? AND (name LIKE ? OR qualified_name LIKE ? OR file_path LIKE ?) ORDER BY name LIMIT ?`
+      : `SELECT * FROM symbols WHERE project_id = ? AND is_deleted = 0 AND (name LIKE ? OR qualified_name LIKE ? OR file_path LIKE ?) ORDER BY name LIMIT ?`;
+    const params = kind
+      ? [projectName, kind, query, query, query, limit]
+      : [projectName, query, query, query, limit];
+    const symbols = db.prepare(sql).all(...params) as SymbolRow[];
+    return {
+      content: [{ type: "text", text: JSON.stringify(symbols.map(symbol => formatSymbol(symbol, {
+        includeBody: false,
+        verbose: Boolean(args.verbose)
+      }))) }],
+    };
+  }
+
+  if (name === "get_symbol_body") {
+    const symbolId = args.symbol_id || resolveSymbolIdFromRef(args.ref, args.project_id || 'default');
+    const symbol = db.prepare("SELECT id, name, qualified_name, file_path, start_line, end_line, language, body FROM symbols WHERE id = ? AND is_deleted = 0")
+      .get(symbolId) as Pick<SymbolRow, 'id' | 'name' | 'qualified_name' | 'file_path' | 'start_line' | 'end_line' | 'language' | 'body'> | undefined;
+    if (!symbol) {
+      return { content: [{ type: "text", text: "Symbol not found." }] };
+    }
+    return {
+      content: [{ type: "text", text: JSON.stringify(symbol) }],
     };
   }
 
   if (name === "get_symbol_history") {
-    const symbolId = args?.symbol_id;
-    const history = db.prepare("SELECT * FROM symbol_history WHERE symbol_id = ? ORDER BY version DESC LIMIT ?").all(symbolId, args?.limit || 10);
+    const symbolId = args.symbol_id;
+    const history = db.prepare("SELECT * FROM symbol_history WHERE symbol_id = ? ORDER BY version DESC LIMIT ?").all(symbolId, args.limit || 10) as any[];
+    const response = history.map(row => ({
+      id: row.id,
+      symbol_id: row.symbol_id,
+      version: row.version,
+      signature: row.signature,
+      start_line: row.start_line,
+      end_line: row.end_line,
+      commit_sha: row.commit_sha,
+      commit_message: row.commit_message,
+      commit_author: row.commit_author,
+      commit_at: row.commit_at,
+      change_type: row.change_type,
+      branch: row.branch,
+      pr_reference: row.pr_reference,
+      ...(args.include_body ? { body: row.body } : {})
+    }));
     return {
-      content: [{ type: "text", text: JSON.stringify(history) }],
+      content: [{ type: "text", text: JSON.stringify(response) }],
     };
   }
 
   if (name === "changed_since") {
-    const projectName = args?.project_id || 'default';
-    const since = args?.since;
+    const projectName = args.project_id || 'default';
+    const since = args.since;
     const symbols = db.prepare("SELECT * FROM symbols WHERE project_id = ? AND updated_at > ?").all(projectName, since);
     return {
       content: [{ type: "text", text: JSON.stringify(symbols) }],
@@ -218,32 +303,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   if (name === "find_callers") {
-    const symbolId = args?.symbol_id;
-    const symbol = db.prepare("SELECT * FROM symbols WHERE id = ?").get(symbolId);
+    const symbolId = args.symbol_id;
+    const includeTests = args.include_tests ?? true;
+    const minConfidence = args.min_confidence ?? 0.0;
+    const symbol = db.prepare("SELECT * FROM symbols WHERE id = ? AND is_deleted = 0").get(symbolId) as SymbolRow | undefined;
     if (!symbol) {
         return { content: [{ type: "text", text: "Symbol not found." }] };
     }
-    const callers = db.prepare("SELECT * FROM symbols WHERE body LIKE ? AND id != ?").all(`%${symbol.name}%`, symbolId);
+    let callers = db.prepare("SELECT * FROM symbols WHERE project_id = ? AND body LIKE ? AND id != ? AND is_deleted = 0")
+      .all(symbol.project_id, `%${symbol.name}%`, symbolId) as SymbolRow[];
+    if (!includeTests) {
+      callers = callers.filter(c => !/[._-](test|spec)\.[^.]+$/.test(c.file_path));
+    }
+    const definiteCallers = callers.map(c => ({
+      symbol_id: c.id,
+      qualified_name: c.qualified_name,
+      file_path: c.file_path,
+      confidence: 0.7,
+      resolution_method: 'fuzzy_name_match'
+    })).filter(c => c.confidence >= minConfidence);
     return {
       content: [{ type: "text", text: JSON.stringify({
-          definite_callers: callers.map(c => ({
-              symbol_id: c.id,
-              qualified_name: c.qualified_name,
-              file_path: c.file_path,
-              confidence: 0.7,
-              resolution_method: 'fuzzy_name_match'
-          })),
+          definite_callers: definiteCallers,
           probable_callers: []
       }) }],
     };
   }
 
   if (name === "index_status") {
-    const projectName = args?.project_id;
-    const total = db.prepare("SELECT COUNT(*) as count FROM symbols WHERE project_id = ?").get(projectName)?.count || 0;
-    const excluded = db.prepare("SELECT count(*) as count FROM files WHERE project_id = ? AND is_excluded = 1").get(projectName)?.count || 0;
+    const projectName = args.project_id || 'default';
+    const total = (db.prepare("SELECT COUNT(*) as count FROM symbols WHERE project_id = ? AND is_deleted = 0").get(projectName) as CountRow | undefined)?.count || 0;
+    const deleted = (db.prepare("SELECT COUNT(*) as count FROM symbols WHERE project_id = ? AND is_deleted = 1").get(projectName) as CountRow | undefined)?.count || 0;
+    const excluded = (db.prepare("SELECT count(*) as count FROM files WHERE project_id = ? AND is_excluded = 1").get(projectName) as CountRow | undefined)?.count || 0;
     return {
-      content: [{ type: "text", text: JSON.stringify({ status: 'ready', total_symbols: total, excluded_files: excluded }) }],
+      content: [{ type: "text", text: JSON.stringify({ status: 'ready', total_symbols: total, deleted_symbols: deleted, excluded_files: excluded }) }],
     };
   }
 
@@ -251,20 +344,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { session_id, role, content, explicit_symbols = [] } = args;
     const messageId = uuidv4();
     const now = Date.now();
+    const session = db.prepare("SELECT project_id FROM sessions WHERE id = ?").get(session_id) as { project_id: string } | undefined;
+    const projectId = args.project_id || session?.project_id || 'default';
 
     db.prepare("INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)").run(messageId, session_id, role, content, now);
 
-    const references = await resolveSymbolReferences(content, explicit_symbols);
+    const references = await resolveSymbolReferences(content, explicit_symbols, projectId) as SymbolReference[];
     
     const insertRef = db.prepare("INSERT INTO message_symbol_references (message_id, symbol_id, confidence, reference_type, extraction_source) VALUES (?, ?, ?, ?, ?)");
-    const transaction = db.transaction((refs) => {
+    const transaction = db.transaction((refs: SymbolReference[]) => {
         for (const ref of refs) {
             insertRef.run(messageId, ref.symbol_id, ref.confidence, ref.reference_type, ref.extraction_source);
         }
     });
     transaction(references);
 
-    db.prepare("INSERT INTO messages_fts(rowid, content) VALUES (?, ?)").run(db.prepare("SELECT rowid FROM messages WHERE id = ?").get(messageId).rowid, content);
+    const messageRow = db.prepare("SELECT rowid FROM messages WHERE id = ?").get(messageId) as MessageRow;
+    db.prepare("INSERT INTO messages_fts(rowid, content) VALUES (?, ?)").run(messageRow.rowid, content);
 
     return {
       content: [{ type: "text", text: `Message saved. Extracted ${references.length} symbol references.` }],
@@ -272,15 +368,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   if (name === "search_history") {
-    const query = args?.query;
+    const query = args.query;
     const results = db.prepare(`
         SELECT m.id, m.content, m.created_at 
         FROM messages m
+        JOIN sessions s ON m.session_id = s.id
         JOIN messages_fts fts ON m.rowid = fts.rowid
         WHERE messages_fts MATCH ?
+        AND s.project_id = ?
         ORDER BY rank
         LIMIT ?
-    `).all(query, args?.limit || 20);
+    `).all(query, args.project_id || 'default', args.limit || 20);
 
     return {
       content: [{ type: "text", text: JSON.stringify(results) }],
@@ -296,9 +394,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       .run(decisionId, project_id, summary, rationale, now, source_session, 'active');
 
     const insertSymbolRef = db.prepare("INSERT INTO decision_symbol_references (decision_id, symbol_id) VALUES (?, ?)");
-    const transaction = db.transaction((symbols) => {
+    const transaction = db.transaction((symbols: string[]) => {
         for (const symName of symbols) {
-            const symbol = db.prepare("SELECT id FROM symbols WHERE name = ? LIMIT 1").get(symName);
+            const symbol = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0 LIMIT 1")
+              .get(project_id, symName) as Pick<SymbolRow, 'id'> | undefined;
             if (symbol) {
                 insertSymbolRef.run(decisionId, symbol.id);
             }
@@ -313,15 +412,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   if (name === "get_decisions") {
     const { project_id, symbol, status = 'active' } = args;
-    let query = "SELECT * FROM project_decisions WHERE project_id = ? AND status = ?";
-    const params = [project_id, status];
+    let query = "SELECT * FROM project_decisions WHERE project_id = ?";
+    const params: any[] = [project_id];
+
+    if (status !== 'all') {
+      query += " AND status = ?";
+      params.push(status);
+    }
 
     if (symbol) {
         query = `
             SELECT d.* FROM project_decisions d
             JOIN decision_symbol_references dsr ON d.id = dsr.decision_id
             JOIN symbols s ON dsr.symbol_id = s.id
-            WHERE d.project_id = ? AND d.status = ? AND s.name = ?
+            WHERE d.project_id = ? ${status !== 'all' ? 'AND d.status = ?' : ''} AND s.name = ?
         `;
         params.push(symbol);
     }
@@ -338,8 +442,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       FROM symbols s
       JOIN message_symbol_references msr ON s.id = msr.symbol_id
       JOIN messages m ON msr.message_id = m.id
+      JOIN sessions sess ON m.session_id = sess.id
       WHERE s.updated_at > m.created_at
-    `).all();
+      AND s.project_id = ?
+      AND sess.project_id = ?
+    `).all(args.project_id || 'default', args.project_id || 'default');
     return {
       content: [{ type: "text", text: JSON.stringify(results) }],
     };
@@ -355,9 +462,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       FROM symbols s
       JOIN message_symbol_references msr ON s.id = msr.symbol_id
       JOIN messages m ON msr.message_id = m.id
+      JOIN sessions sess ON m.session_id = sess.id
       WHERE s.updated_at BETWEEN ? AND ? 
       AND msr.confidence >= ?
-    `).all(dayStart, dayEnd, min_confidence);
+      AND s.project_id = ?
+      AND sess.project_id = ?
+    `).all(dayStart, dayEnd, min_confidence, project_id, project_id);
 
     return {
       content: [{ type: "text", text: JSON.stringify(results) }],
@@ -365,17 +475,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   if (name === "context_since_last_session") {
-    const project_id = args?.project_id || 'default';
-    const lastSession = db.prepare("SELECT ended_at FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 1").get(project_id);
+    const project_id = args.project_id || 'default';
+    const lastSession = db.prepare("SELECT ended_at FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 1").get(project_id) as SessionRow | undefined;
     
     if (!lastSession) {
         return { content: [{ type: "text", text: "No previous sessions found for this project." }] };
     }
 
     const lastEndedAt = lastSession.ended_at || Date.now();
-    const changedSymbols = db.prepare("SELECT id, name, updated_at FROM symbols WHERE project_id = ? AND updated_at > ?").all(project_id, lastEndedAt);
+    const changedSymbols = db.prepare("SELECT id, name, updated_at FROM symbols WHERE project_id = ? AND updated_at > ?").all(project_id, lastEndedAt) as SymbolRow[];
     
-    const activeDecisions = db.prepare("SELECT id, summary FROM project_decisions WHERE project_id = ? AND status = 'active'").all(project_id);
+    const activeDecisions = db.prepare("SELECT id, summary FROM project_decisions WHERE project_id = ? AND status = 'active'").all(project_id) as DecisionRow[];
 
     return {
       content: [{ type: "text", text: JSON.stringify({
@@ -397,14 +507,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { session_id, mode = 'raw_only' } = args;
 
     const transaction = db.transaction(() => {
-        db.prepare("DELETE FROM messages WHERE session_id = ?").run(session_id);
+        if (mode === 'raw_and_derived') {
+            db.prepare("UPDATE project_decisions SET status = 'superseded', source_session = NULL WHERE source_session = ?").run(session_id);
+        } else {
+            db.prepare("UPDATE project_decisions SET source_session = NULL WHERE source_session = ?").run(session_id);
+        }
+
+        db.prepare("DELETE FROM messages_fts WHERE rowid IN (SELECT rowid FROM messages WHERE session_id = ?)").run(session_id);
         db.prepare("DELETE FROM message_symbol_references WHERE message_id IN (SELECT id FROM messages WHERE session_id = ?)").run(session_id);
+        db.prepare("DELETE FROM messages WHERE session_id = ?").run(session_id);
         db.prepare("DELETE FROM session_summaries WHERE session_id = ?").run(session_id);
         db.prepare("DELETE FROM sessions WHERE id = ?").run(session_id);
-
-        if (mode === 'raw_and_derived') {
-            db.prepare("UPDATE project_decisions SET status = 'superseded' WHERE source_session = ?").run(session_id);
-        }
     });
 
     transaction();
@@ -414,6 +527,67 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   throw new Error(`Tool not found: ${name}`);
+}
+
+function formatSymbol(symbol: SymbolRow, options: { includeBody: boolean; verbose: boolean }) {
+  if (!options.verbose) {
+    return {
+      ref: symbolRef(symbol.id),
+      name: symbol.name,
+      kind: symbol.kind,
+      file: relativeDisplayPath(symbol.file_path),
+      lines: `${symbol.start_line}-${symbol.end_line}`,
+      sig: compactSignature(symbol.signature)
+    };
+  }
+
+  return {
+    ref: symbolRef(symbol.id),
+    id: symbol.id,
+    project_id: symbol.project_id,
+    name: symbol.name,
+    qualified_name: symbol.qualified_name,
+    kind: symbol.kind,
+    file_path: symbol.file_path,
+    start_line: symbol.start_line,
+    end_line: symbol.end_line,
+    signature: symbol.signature,
+    language: symbol.language,
+    updated_at: symbol.updated_at,
+    ...(options.includeBody ? { body: symbol.body } : {})
+  };
+}
+
+function symbolRef(symbolId: string) {
+  return crypto.createHash('sha1').update(symbolId).digest('hex').slice(0, 10);
+}
+
+function resolveSymbolIdFromRef(ref: string | undefined, projectId: string) {
+  if (!ref) return undefined;
+  const symbols = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND is_deleted = 0").all(projectId) as Pick<SymbolRow, 'id'>[];
+  return symbols.find(symbol => symbolRef(symbol.id) === ref)?.id;
+}
+
+function relativeDisplayPath(filePath: string) {
+  const projectPath = process.env.PROJECT_PATH;
+  if (!projectPath) return filePath;
+  const relative = pathRelative(projectPath, filePath);
+  return relative.startsWith('..') ? filePath : relative;
+}
+
+function pathRelative(from: string, to: string) {
+  return require('path').relative(from, to).replace(/\\/g, '/');
+}
+
+function compactSignature(signature: string | null) {
+  if (!signature) return null;
+  const normalized = signature.replace(/\s+/g, ' ').trim();
+  return normalized.length > 80 ? `${normalized.slice(0, 77)}...` : normalized;
+}
+
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: rawArgs } = request.params;
+  return callTool(name, (rawArgs ?? {}) as Record<string, any>);
 });
 
 export async function runServer() {

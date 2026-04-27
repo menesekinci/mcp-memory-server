@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 export function installGitHooks(projectPath) {
-    console.log(`Installing Git hooks for: ${projectPath}`);
+    console.error(`Installing Git hooks for: ${projectPath}`);
     const hooksDir = path.join(projectPath, '.git', 'hooks');
     
     if (!fs.existsSync(hooksDir)) {
@@ -24,8 +24,6 @@ echo "MCP Memory Server: Triggering re-index..."
     hooks.forEach(hook => {
         const hookPath = path.join(hooksDir, hook);
         fs.writeFileSync(hookPath, hookContent, { mode: 0o755 });
-        console.log(`Installed hook: ${hook}`);
+        console.error(`Installed hook: ${hook}`);
     });
 }
-
-module.exports = { installGitHooks };

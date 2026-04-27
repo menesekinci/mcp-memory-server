@@ -1,28 +1,26 @@
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import db from './db';
 import Parser from 'tree-sitter';
 import TypeScript from 'tree-sitter-typescript';
 import Python from 'tree-sitter-python';
-import fs from 'fs';
 import path from 'path';
-
-const parser = new Parser();
+import { v4 as uuidv4 } from 'uuid';
 
 const LANGUAGES = {
-    '.ts': { language: TypeScript.typescript, name: 'typescript' },
-    '.tsx': { language: TypeScript.typescript, name: 'typescript' },
-    '.py': { language: Python.python, name: 'python' },
+    '.ts': { language: (TypeScript as any).typescript, name: 'typescript' },
+    '.tsx': { language: (TypeScript as any).tsx, name: 'typescript' },
+    '.py': { language: Python as any, name: 'python' },
 };
 
-export function indexGitHistory(projectPath) {
-    console.log(`Indexing Git history for: ${projectPath}`);
+export function indexGitHistory(projectPath: string, projectId = 'default') {
+    console.error(`Indexing Git history for: ${projectPath}`);
     
     try {
         const logOutput = execSync(`git -C "${projectPath}" log --all --diff-filter=ACM --name-only --format="%H|%ae|%s|%at"`, { encoding: 'utf8' });
         const lines = logOutput.split('\n');
 
-        let currentCommit = null;
-        let currentMeta = null;
+        let currentCommit: string | null = null;
+        let currentMeta: { sha: string; author: string; subject: string; timestamp: number } | null = null;
 
         for (const line of lines) {
             if (!line) continue;
@@ -33,7 +31,9 @@ export function indexGitHistory(projectPath) {
                 currentMeta = { sha, author, subject, timestamp: parseInt(timestamp) * 1000 };
             } else {
                 const filePath = path.join(projectPath, line);
-                indexHistoricalFile(currentCommit, currentMeta, filePath);
+                if (currentCommit && currentMeta) {
+                    indexHistoricalFile(projectPath, currentCommit, currentMeta, filePath, projectId);
+                }
             }
         }
     } catch (e) {
@@ -41,28 +41,49 @@ export function indexGitHistory(projectPath) {
     }
 }
 
-function indexHistoricalFile(sha, meta, filePath) {
+function indexHistoricalFile(projectPath: string, sha: string, meta: { subject: string; author: string; timestamp: number }, filePath: string, projectId: string) {
     try {
-        const content = execSync(`git -C "${path.dirname(filePath)}" show ${sha}:${path.basename(filePath)}`, { encoding: 'utf8' });
+        const relativePath = path.relative(projectPath, filePath).replace(/\\/g, '/');
+        const content = execFileSync('git', ['-C', projectPath, 'show', `${sha}:${relativePath}`], { encoding: 'utf8' });
         const ext = path.extname(filePath);
         const langConfig = LANGUAGES[ext];
         if (!langConfig) return;
 
+        const parser = new Parser();
         parser.setLanguage(langConfig.language);
         const tree = parser.parse(content);
         
         // Use the same extraction logic as indexer.ts
-        const symbols = extractHistoricalSymbols(tree, content, filePath, langConfig.name);
+        const symbols = extractHistoricalSymbols(tree, content, filePath, langConfig.name, projectId);
 
         const insertHistory = db.prepare(`
             INSERT INTO symbol_history (id, symbol_id, version, body, signature, start_line, end_line, commit_sha, commit_message, commit_author, commit_at, change_type)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
+        const insertSymbol = db.prepare(`
+            INSERT OR IGNORE INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, commit_sha, updated_at, is_deleted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        `);
 
-        const transaction = db.transaction((syms) => {
+        const transaction = db.transaction((syms: any[]) => {
             syms.forEach((s, index) => {
+                insertSymbol.run(
+                    s.id,
+                    projectId,
+                    s.name,
+                    s.name,
+                    s.kind,
+                    filePath,
+                    s.start_line,
+                    s.end_line,
+                    s.signature,
+                    s.body,
+                    langConfig.name,
+                    sha,
+                    meta.timestamp
+                );
                 insertHistory.run(
-                    require('uuid').v4(),
+                    uuidv4(),
                     s.id,
                     index,
                     s.body,
@@ -84,14 +105,14 @@ function indexHistoricalFile(sha, meta, filePath) {
     }
 }
 
-function extractHistoricalSymbols(tree, content, filePath, language) {
-    const symbols = [];
-    function traverse(node) {
+function extractHistoricalSymbols(tree: Parser.Tree, content: string, filePath: string, language: string, projectId: string) {
+    const symbols: any[] = [];
+    function traverse(node: Parser.SyntaxNode) {
         let symbol = null;
         if (language === 'typescript') {
             if (node.type === 'function_declaration') {
                 const nameNode = node.childForFieldName('name');
-                if (nameNode) symbol = { name: nameNode.text, kind: 'function', start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1, signature: node.text.split('{')[0].trim(), body: node.text };
+                if (nameNode) symbol = { name: nameNode.text, kind: 'function', start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1, signature: signatureBeforeBody(node, content), body: node.text };
             } else if (node.type === 'class_declaration') {
                 const nameNode = node.childForFieldName('name');
                 if (nameNode) symbol = { name: nameNode.text, kind: 'class', start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1, signature: `class ${nameNode.text}`, body: node.text };
@@ -104,7 +125,7 @@ function extractHistoricalSymbols(tree, content, filePath, language) {
         }
 
         if (symbol) {
-            const id = `${filePath}:${symbol.start_line}:${symbol.start_line}`;
+            const id = `${projectId}:${filePath}:${symbol.kind}:${symbol.name}`;
             symbols.push({ id, ...symbol });
         }
 
@@ -114,4 +135,8 @@ function extractHistoricalSymbols(tree, content, filePath, language) {
     return symbols;
 }
 
-module.exports = { indexGitHistory };
+function signatureBeforeBody(node: Parser.SyntaxNode, content: string) {
+    const bodyNode = node.childForFieldName('body');
+    if (!bodyNode) return node.text.split('\n')[0].trim();
+    return content.slice(node.startIndex, bodyNode.startIndex).trim();
+}

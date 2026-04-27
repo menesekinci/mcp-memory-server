@@ -1,0 +1,6 @@
+node_modules
+dist
+.mcp-memory-server
+memory.db
+.git
+*.log

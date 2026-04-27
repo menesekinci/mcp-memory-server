@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import db from './db';
 import { v4 as uuidv4 } from 'uuid';
+import { extractCallReferences } from './call-graph';
 
 const LANGUAGES = {
     '.ts': { language: (TypeScript as any).typescript, name: 'typescript' },
@@ -68,6 +69,9 @@ class IndexWorkerPool {
             parser.setLanguage(langConfig.language);
             const tree = parser.parse(content);
             const symbols = extractSymbols(tree, content, filePath, langConfig.name, projectId);
+            const callReferences = langConfig.name === 'typescript'
+                ? extractCallReferences(tree, symbols, filePath)
+                : [];
             const now = Date.now();
 
             const upsertSymbol = db.prepare(`
@@ -85,18 +89,28 @@ class IndexWorkerPool {
                     updated_at=excluded.updated_at,
                     is_deleted=0
             `);
+            const insertCall = db.prepare(`
+                INSERT OR REPLACE INTO symbol_calls (caller_symbol_id, target_symbol_id, target_name, project_id, file_path, line, confidence, resolution_method)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `);
 
-            const transaction = db.transaction((symbolsToSave) => {
+            const transaction = db.transaction((symbolsToSave, callsToSave) => {
                 db.prepare("UPDATE symbols SET is_deleted = 1, updated_at = ? WHERE project_id = ? AND file_path = ?")
                   .run(now, projectId, filePath);
                 for (const s of symbolsToSave) {
                     upsertSymbol.run(s.id, s.project_id, s.name, s.qualified_name, s.kind, s.file_path, s.start_line, s.end_line, s.signature, s.body, s.language, s.updated_at);
                 }
+                db.prepare("DELETE FROM symbol_calls WHERE project_id = ? AND file_path = ?").run(projectId, filePath);
+                for (const call of callsToSave) {
+                    const target = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0 LIMIT 1")
+                      .get(projectId, call.target_name) as { id: string } | undefined;
+                    insertCall.run(call.caller_symbol_id, target?.id || null, call.target_name, projectId, call.file_path, call.line, call.confidence, call.resolution_method);
+                }
                 db.prepare("INSERT OR REPLACE INTO files (id, project_id, path, language, last_indexed_at, is_excluded) VALUES (?, ?, ?, ?, ?, ?)")
                   .run(fileId, projectId, filePath, langConfig.name, now, 0);
             });
 
-            transaction(symbols);
+            transaction(symbols, callReferences);
         } catch (e) {
             console.error(`Error indexing file ${filePath}:`, e);
         }

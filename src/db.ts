@@ -116,6 +116,18 @@ export function initDb() {
             PRIMARY KEY (decision_id, symbol_id)
         );
 
+        CREATE TABLE IF NOT EXISTS symbol_calls (
+            caller_symbol_id TEXT NOT NULL REFERENCES symbols(id),
+            target_symbol_id TEXT REFERENCES symbols(id),
+            target_name TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            line INTEGER NOT NULL,
+            confidence REAL NOT NULL,
+            resolution_method TEXT NOT NULL,
+            PRIMARY KEY (caller_symbol_id, target_name, file_path, line)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_symbols_project ON symbols(project_id);
         CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
         CREATE INDEX IF NOT EXISTS idx_symbols_project_name ON symbols(project_id, name);
@@ -123,6 +135,8 @@ export function initDb() {
         CREATE INDEX IF NOT EXISTS idx_history_symbol ON symbol_history(symbol_id);
         CREATE INDEX IF NOT EXISTS idx_history_commit ON symbol_history(commit_sha);
         CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
+        CREATE INDEX IF NOT EXISTS idx_calls_target ON symbol_calls(project_id, target_symbol_id, target_name);
+        CREATE INDEX IF NOT EXISTS idx_calls_caller ON symbol_calls(caller_symbol_id);
     `);
 }
 

@@ -24,8 +24,8 @@ We measured a simple discovery task in this repository: find the `callTool` symb
 Classic text search returned every matching import, test call, helper reference, and the actual function:
 
 ```text
-chars=3163
-approx_tokens=791
+chars=4375
+approx_tokens=1094
 ```
 
 The MCP symbol search returned one compact symbol result:
@@ -39,7 +39,7 @@ chars=180
 approx_tokens=45
 ```
 
-That is roughly **94% fewer tokens** and a **17.5x smaller discovery output** before reading any source body. Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
+That is roughly **95.9% fewer tokens** and a **24.3x smaller discovery output** before reading any source body. Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
 
 ## Quick Start With Codex
 
@@ -131,6 +131,30 @@ Available tools:
 3. Call `get_symbol_body` only for the selected symbol.
 4. Fall back to shell search/read commands for docs, config, CSS, JSON, fixtures, and broad text searches.
 5. Save important project decisions with `save_decision` so future agents can recover context.
+
+See [AGENTS.md](AGENTS.md) for bug fix, review, refactor, and regression investigation flows.
+
+## Benchmarks
+
+Run the benchmark suite:
+
+```powershell
+npm run benchmark
+```
+
+It writes:
+
+```text
+benchmark/results/latest.json
+benchmark/results/latest.md
+```
+
+Current benchmark coverage:
+
+- Classic broad text search versus compact MCP symbol discovery.
+- AST definite caller detection versus fuzzy probable caller fallback.
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the phased roadmap.
 
 ## Local Development
 

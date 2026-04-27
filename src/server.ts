@@ -310,22 +310,54 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
     if (!symbol) {
         return { content: [{ type: "text", text: "Symbol not found." }] };
     }
-    let callers = db.prepare("SELECT * FROM symbols WHERE project_id = ? AND body LIKE ? AND id != ? AND is_deleted = 0")
+    let astCallers = db.prepare(`
+      SELECT s.id, s.qualified_name, s.file_path, sc.confidence, sc.resolution_method, sc.line
+      FROM symbol_calls sc
+      JOIN symbols s ON sc.caller_symbol_id = s.id
+      WHERE sc.project_id = ?
+      AND (sc.target_symbol_id = ? OR sc.target_name = ?)
+      AND s.is_deleted = 0
+    `).all(symbol.project_id, symbolId, symbol.name) as Array<{
+      id: string;
+      qualified_name: string;
+      file_path: string;
+      confidence: number;
+      resolution_method: string;
+      line: number;
+    }>;
+
+    if (!includeTests) {
+      astCallers = astCallers.filter(c => !/[._-](test|spec)\.[^.]+$/.test(c.file_path));
+    }
+
+    const astCallerIds = new Set(astCallers.map(c => c.id));
+    let fuzzyCallers = db.prepare("SELECT * FROM symbols WHERE project_id = ? AND body LIKE ? AND id != ? AND is_deleted = 0")
       .all(symbol.project_id, `%${symbol.name}%`, symbolId) as SymbolRow[];
     if (!includeTests) {
-      callers = callers.filter(c => !/[._-](test|spec)\.[^.]+$/.test(c.file_path));
+      fuzzyCallers = fuzzyCallers.filter(c => !/[._-](test|spec)\.[^.]+$/.test(c.file_path));
     }
-    const definiteCallers = callers.map(c => ({
+    fuzzyCallers = fuzzyCallers.filter(c => !astCallerIds.has(c.id));
+
+    const definiteCallers = astCallers.map(c => ({
       symbol_id: c.id,
       qualified_name: c.qualified_name,
       file_path: c.file_path,
-      confidence: 0.7,
+      line: c.line,
+      confidence: c.confidence,
+      resolution_method: c.resolution_method
+    })).filter(c => c.confidence >= minConfidence);
+
+    const probableCallers = fuzzyCallers.map(c => ({
+      symbol_id: c.id,
+      qualified_name: c.qualified_name,
+      file_path: c.file_path,
+      confidence: 0.5,
       resolution_method: 'fuzzy_name_match'
     })).filter(c => c.confidence >= minConfidence);
     return {
       content: [{ type: "text", text: JSON.stringify({
           definite_callers: definiteCallers,
-          probable_callers: []
+          probable_callers: probableCallers
       }) }],
     };
   }

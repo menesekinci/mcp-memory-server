@@ -14,12 +14,51 @@ Recommended flow:
 
 The goal is not to replace normal code inspection. The goal is to reduce token use during discovery, then inspect the exact source when detail is needed.
 
+## Task Flows
+
+### Bug Fix Flow
+
+1. Run `index_status` for the current project.
+2. Search prior context with `search_history` using the error, function name, or module name.
+3. Use `search_symbols` or `lookup_symbol` to identify candidate symbols.
+4. Check `get_decisions` for relevant project decisions.
+5. Call `get_symbol_body` only for the selected symbol.
+6. Use shell file reads only after the relevant file and line range are known.
+
+### Code Review Flow
+
+1. Use normal git commands to inspect changed files.
+2. Use `changed_since` or `search_symbols` to map changed files to symbols.
+3. Use `find_callers` for changed public functions or methods.
+4. Use `get_decisions` to check whether changes conflict with prior decisions.
+5. Read exact source only for changed symbols and their likely callers.
+
+### Refactor Flow
+
+1. Use `lookup_symbol` for the target symbol.
+2. Use `find_callers` before editing.
+3. Read bodies with `get_symbol_body` for the target and definite callers.
+4. After editing, run tests and save important architectural decisions with `save_decision`.
+
+### Regression Investigation Flow
+
+1. Use `context_since_last_session` to find recent symbol changes.
+2. Use `symbols_discussed_and_changed` to connect prior discussion to later edits.
+3. Use `find_regression_candidates` when a date or timestamp is known.
+4. Inspect exact source only after MCP narrows the candidate symbols.
+
 ## Verification
 
 Before reporting changes as complete, run:
 
 ```powershell
 npm test
+```
+
+For benchmark-impacting changes, also run:
+
+```powershell
+npm run benchmark
 ```
 
 Run `npm run build` after changes that affect the MCP server runtime, because Codex is configured to launch the compiled `dist/src/index.js`.

@@ -19,6 +19,7 @@
     "start": "ts-node src/index.ts",
     "test:faz0": "ts-node test-faz0.ts",
     "test:integration": "ts-node test-integration.ts",
+    "benchmark": "ts-node scripts/benchmark.ts",
     "test": "npm run typecheck && npm run test:faz0 && npm run test:integration",
     "prepack": "npm run build",
     "prepublishOnly": "npm test"

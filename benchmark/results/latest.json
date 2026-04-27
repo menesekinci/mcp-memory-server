@@ -1,0 +1,20 @@
+{
+  "generated_at": "2026-04-27T19:37:11.495Z",
+  "results": [
+    {
+      "name": "symbol_discovery_callTool",
+      "classic_chars": 4375,
+      "classic_tokens": 1094,
+      "mcp_chars": 180,
+      "mcp_tokens": 45,
+      "token_savings_pct": 95.9,
+      "notes": "Find the callTool symbol with broad text search versus compact MCP symbol search.",
+      "passed": true
+    },
+    {
+      "name": "ast_callers_vs_fuzzy_fallback",
+      "notes": "Definite callers: checkout; probable fuzzy callers: mentionOnly.",
+      "passed": true
+    }
+  ]
+}

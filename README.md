@@ -15,9 +15,33 @@ Agents often spend a lot of tokens finding the right file or function before rea
 3. Read the full symbol body only when needed.
 4. Save durable messages and decisions for future agents.
 
-## Quick Start With Codex
+## Measured Token Savings
 
-After the package is published to npm:
+![Token savings test infographic](docs/assets/token-savings-test.png)
+
+We measured a simple discovery task in this repository: find the `callTool` symbol.
+
+Classic text search returned every matching import, test call, helper reference, and the actual function:
+
+```text
+chars=3163
+approx_tokens=791
+```
+
+The MCP symbol search returned one compact symbol result:
+
+```json
+[{"ref":"eef296263a","name":"callTool","kind":"function","file":"src/server.ts","lines":"225-530","sig":"async function callTool(name: string, rawArgs: Record<string, any> = {})"}]
+```
+
+```text
+chars=180
+approx_tokens=45
+```
+
+That is roughly **94% fewer tokens** and a **17.5x smaller discovery output** before reading any source body. Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
+
+## Quick Start With Codex
 
 ```powershell
 codex mcp add codex-mcp-memory-server `

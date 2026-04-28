@@ -316,6 +316,70 @@ export function calculateTotal() {
     }
 }
 
+async function testLanguageDepth(db: TestDb, startIndexer: (projectPath: string, projectId?: string) => any, callTool: (name: string, args?: Record<string, any>) => Promise<any>) {
+    const projectId = 'language-depth';
+    const projectPath = createTempDir('mcp-memory-language-depth');
+    const jsFile = path.join(projectPath, 'src', 'cart.js');
+    const pyFile = path.join(projectPath, 'src', 'cart.py');
+
+    writeFile(jsFile, `
+export const calculateTotal = () => 100;
+
+export function checkout() {
+  return calculateTotal();
+}
+
+export function mentionOnly() {
+  return "calculateTotal";
+}
+`);
+    writeFile(pyFile, `
+def calculate_total():
+    return 100
+
+def checkout_py():
+    return calculate_total()
+
+def mention_only_py():
+    return "calculate_total"
+`);
+
+    const watcher = startIndexer(projectPath, projectId);
+    try {
+        await waitFor(() => {
+            const jsTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'calculateTotal', jsFile);
+            const pyTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'calculate_total', pyFile);
+            return Boolean(jsTarget && pyTarget);
+        });
+
+        const jsTarget = db.prepare("SELECT id, language FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'calculateTotal', jsFile) as { id: string; language: string } | undefined;
+        assert(jsTarget?.language === 'javascript', 'JavaScript arrow functions should be indexed as symbols');
+
+        const jsCallers = parseToolJson<{ definite_callers: any[]; probable_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: jsTarget.id,
+            min_confidence: 0.0
+        }));
+        assert(jsCallers.definite_callers.some(c => c.qualified_name === 'checkout' && c.resolution_method === 'ast_same_file_or_name'), 'JavaScript callers should be extracted from AST call expressions');
+        assert(jsCallers.probable_callers.some(c => c.qualified_name === 'mentionOnly'), 'JavaScript fuzzy fallback should keep string-only mentions as probable');
+
+        const pyTarget = db.prepare("SELECT id, language FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'calculate_total', pyFile) as { id: string; language: string } | undefined;
+        assert(pyTarget?.language === 'python', 'Python functions should be indexed as symbols');
+
+        const pyCallers = parseToolJson<{ definite_callers: any[]; probable_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: pyTarget.id,
+            min_confidence: 0.0
+        }));
+        assert(pyCallers.definite_callers.some(c => c.qualified_name === 'checkout_py' && c.resolution_method === 'ast_python_name'), 'Python callers should be extracted from AST call nodes');
+        assert(pyCallers.probable_callers.some(c => c.qualified_name === 'mention_only_py'), 'Python fuzzy fallback should keep string-only mentions as probable');
+    } finally {
+        await watcher.close();
+    }
+}
+
 async function testGitAwareIncrementalIndexing(
     db: TestDb,
     indexFile: (filePath: string, projectId?: string, options?: { force?: boolean }) => Promise<any>,
@@ -445,6 +509,9 @@ async function main() {
 
     await testAstCallGraph(runtime.db, runtime.startIndexer, runtime.callTool);
     console.log('AST call graph tests passed.');
+
+    await testLanguageDepth(runtime.db, runtime.startIndexer, runtime.callTool);
+    console.log('Language depth tests passed.');
 
     await testGitAwareIncrementalIndexing(runtime.db, runtime.indexFile, runtime.reindexChangedFiles, runtime.reconcileProjectFiles, runtime.callTool);
     console.log('Git-aware incremental indexing tests passed.');

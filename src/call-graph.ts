@@ -19,7 +19,11 @@ type IndexedSymbol = {
     end_line: number;
 };
 
-export function extractCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[], filePath: string): CallReference[] {
+export function extractCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[], filePath: string, language = 'typescript'): CallReference[] {
+    if (language === 'python') {
+        return extractPythonCallReferences(tree, symbols, filePath);
+    }
+
     const calls: CallReference[] = [];
     const imports = extractImports(tree.rootNode, filePath);
 
@@ -43,6 +47,34 @@ export function extractCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[
 
         for (let i = 0; i < node.childCount; i++) {
             traverse(node.child(i));
+        }
+    }
+
+    traverse(tree.rootNode);
+    return calls;
+}
+
+function extractPythonCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[], filePath: string): CallReference[] {
+    const calls: CallReference[] = [];
+
+    function traverse(node: Parser.SyntaxNode) {
+        if (node.type === 'call') {
+            const callee = extractPythonCalleeName(node);
+            const caller = findContainingSymbol(symbols, node.startPosition.row + 1);
+            if (callee && caller && callee !== caller.name) {
+                calls.push({
+                    caller_symbol_id: caller.id,
+                    target_name: callee,
+                    file_path: filePath,
+                    line: node.startPosition.row + 1,
+                    confidence: 0.9,
+                    resolution_method: 'ast_python_name'
+                });
+            }
+        }
+
+        for (let i = 0; i < node.namedChildCount; i++) {
+            traverse(node.namedChild(i));
         }
     }
 
@@ -95,6 +127,14 @@ function extractCallee(node: Parser.SyntaxNode): Callee | null {
 
     const lastIdentifier = findLastIdentifier(functionNode);
     return lastIdentifier?.text ? { localName: lastIdentifier.text } : null;
+}
+
+function extractPythonCalleeName(node: Parser.SyntaxNode) {
+    const functionNode = node.childForFieldName('function') || node.namedChild(0);
+    if (!functionNode) return null;
+    if (functionNode.type === 'identifier') return functionNode.text;
+    const lastIdentifier = findLastIdentifier(functionNode);
+    return lastIdentifier?.text || null;
 }
 
 function findLastIdentifier(node: Parser.SyntaxNode): Parser.SyntaxNode | null {

@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-04-28T11:34:39.858Z",
+  "generated_at": "2026-04-28T11:55:47.648Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
-      "classic_chars": 6055,
-      "classic_tokens": 1514,
+      "classic_chars": 7175,
+      "classic_tokens": 1794,
       "mcp_chars": 180,
       "mcp_tokens": 45,
-      "token_savings_pct": 97,
+      "token_savings_pct": 97.5,
       "notes": "Find the callTool symbol with broad text search versus compact MCP symbol search.",
       "passed": true
     },
@@ -24,6 +24,11 @@
     {
       "name": "incremental_changed_file_reindex",
       "notes": "Changed files: 1; indexed: 1; skipped: 0; deleted: 0.",
+      "passed": true
+    },
+    {
+      "name": "language_depth_js_python_callers",
+      "notes": "JavaScript callers: checkout; Python callers: checkout_py.",
       "passed": true
     }
   ]

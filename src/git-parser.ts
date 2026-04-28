@@ -3,12 +3,15 @@ import db from './db';
 import Parser from 'tree-sitter';
 import TypeScript from 'tree-sitter-typescript';
 import Python from 'tree-sitter-python';
+import JavaScript from 'tree-sitter-javascript';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
 const LANGUAGES = {
     '.ts': { language: (TypeScript as any).typescript, name: 'typescript' },
     '.tsx': { language: (TypeScript as any).tsx, name: 'typescript' },
+    '.js': { language: JavaScript as any, name: 'javascript' },
+    '.jsx': { language: JavaScript as any, name: 'javascript' },
     '.py': { language: Python as any, name: 'python' },
 };
 
@@ -109,13 +112,22 @@ function extractHistoricalSymbols(tree: Parser.Tree, content: string, filePath: 
     const symbols: any[] = [];
     function traverse(node: Parser.SyntaxNode) {
         let symbol = null;
-        if (language === 'typescript') {
+        if (language === 'typescript' || language === 'javascript') {
             if (node.type === 'function_declaration') {
                 const nameNode = node.childForFieldName('name');
                 if (nameNode) symbol = { name: nameNode.text, kind: 'function', start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1, signature: signatureBeforeBody(node, content), body: node.text };
             } else if (node.type === 'class_declaration') {
                 const nameNode = node.childForFieldName('name');
                 if (nameNode) symbol = { name: nameNode.text, kind: 'class', start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1, signature: `class ${nameNode.text}`, body: node.text };
+            } else if (node.type === 'method_definition') {
+                const nameNode = node.childForFieldName('name');
+                if (nameNode) symbol = { name: nameNode.text, kind: 'method', start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1, signature: signatureBeforeBody(node, content), body: node.text };
+            } else if (node.type === 'variable_declarator') {
+                const nameNode = node.childForFieldName('name') || node.namedChild(0);
+                const valueNode = node.childForFieldName('value') || node.namedChild(1);
+                if (nameNode && (valueNode?.type === 'arrow_function' || valueNode?.type === 'function_expression')) {
+                    symbol = { name: nameNode.text, kind: 'function', start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1, signature: variableFunctionSignature(node, content), body: node.text };
+                }
             }
         } else if (language === 'python') {
             if (node.type === 'function_definition') {
@@ -139,4 +151,10 @@ function signatureBeforeBody(node: Parser.SyntaxNode, content: string) {
     const bodyNode = node.childForFieldName('body');
     if (!bodyNode) return node.text.split('\n')[0].trim();
     return content.slice(node.startIndex, bodyNode.startIndex).trim();
+}
+
+function variableFunctionSignature(node: Parser.SyntaxNode, content: string) {
+    const valueNode = node.childForFieldName('value') || node.namedChild(1);
+    if (!valueNode) return node.text.split('\n')[0].trim();
+    return content.slice(node.startIndex, valueNode.startIndex).trim();
 }

@@ -17,7 +17,7 @@ MCP client
 | `src/index.ts` | Bootstraps DB, git history, reconciliation, watcher, and MCP server. |
 | `src/server.ts` | Defines MCP tools and tool handlers. |
 | `src/indexer.ts` | Parses source files, stores symbols, tracks blob hashes, and reconciles Git changes. |
-| `src/call-graph.ts` | Extracts TypeScript call references and resolves static imports/barrels. |
+| `src/call-graph.ts` | Extracts TypeScript, JavaScript, and Python call references. |
 | `src/git-parser.ts` | Reads Git history into symbol history records. |
 | `src/symbol-resolver.ts` | Links messages and decisions to symbols. |
 | `src/db.ts` | Owns SQLite schema and migrations. |
@@ -36,7 +36,7 @@ MCP client
 
 ## Indexing
 
-The indexer parses TypeScript, TSX, and Python files. It computes a Git-compatible blob SHA for each indexed file and skips unchanged files. Git changed-file indexing uses:
+The indexer parses TypeScript, TSX, JavaScript, JSX, and Python files. It computes a Git-compatible blob SHA for each indexed file and skips unchanged files. Git changed-file indexing uses:
 
 ```text
 git diff --name-only HEAD
@@ -48,7 +48,7 @@ Rename reconciliation uses Git rename detection and preserves symbol links acros
 
 ## Caller Graph
 
-TypeScript caller extraction currently supports:
+TypeScript and JavaScript caller extraction currently supports:
 
 - Same-file calls.
 - Static named imports.
@@ -59,3 +59,4 @@ TypeScript caller extraction currently supports:
 
 Fuzzy matching remains as a lower-confidence fallback.
 
+Python caller extraction currently supports same-file name-based calls from Python `call` AST nodes. Fuzzy matching remains available for string-only mentions and broader probable caller fallback.

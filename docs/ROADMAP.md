@@ -5,7 +5,7 @@ This roadmap keeps the project focused. Each phase should improve either measure
 ## Phase 0 - Published Core
 
 - [x] SQLite-backed symbol memory.
-- [x] TypeScript, TSX, and Python symbol indexing.
+- [x] TypeScript, TSX, JavaScript, JSX, and Python symbol indexing.
 - [x] Compact discovery tools: `search_symbols`, `lookup_symbol`, `get_symbol_body`.
 - [x] Conversation memory and decision memory tools.
 - [x] npm package and `npx` launch path.
@@ -47,10 +47,10 @@ This roadmap keeps the project focused. Each phase should improve either measure
 
 ## Phase 5 - Language Depth Before Breadth
 
-- [ ] Strengthen TypeScript/TSX resolver quality.
-- [ ] Improve Python extraction and call references.
-- [ ] Add JavaScript support through the TypeScript parser path.
-- [ ] Evaluate Go only after TS/Python benchmarks are stable.
+- [x] Strengthen TypeScript/TSX resolver quality.
+- [x] Improve Python extraction and call references.
+- [x] Add JavaScript support through a JavaScript parser path.
+- [x] Evaluate Go only after TS/Python benchmarks are stable.
 
 ## Phase 6 - Plugin Polish
 

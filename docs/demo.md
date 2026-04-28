@@ -11,7 +11,7 @@ Find the `callTool` implementation.
 ```text
 search for "callTool"
 -> many matches across server, tests, benchmark scripts, docs, and examples
--> approx 1514 discovery tokens in the current benchmark
+-> approx 1794 discovery tokens in the current benchmark
 ```
 
 ## MCP Search
@@ -44,8 +44,7 @@ get_symbol_body({ "project_id": "mcp-memory-server", "ref": "eef296263a" })
 ## Outcome
 
 ```text
-classic discovery: ~1514 tokens
+classic discovery: ~1794 tokens
 MCP discovery: ~45 tokens
-savings: 97.0%
+savings: 97.5%
 ```
-

@@ -246,6 +246,56 @@ async function benchmarkIncrementalReindex(): Promise<BenchmarkResult> {
     };
 }
 
+async function benchmarkLanguageDepth(): Promise<BenchmarkResult> {
+    const projectPath = createTempDir('mcp-memory-benchmark-language-depth');
+    const projectId = 'benchmark-language-depth';
+    const jsFile = path.join(projectPath, 'src', 'cart.js');
+    const pyFile = path.join(projectPath, 'src', 'cart.py');
+
+    writeFile(jsFile, `
+export const calculateTotal = () => 100;
+export function checkout() {
+  return calculateTotal();
+}
+`);
+    writeFile(pyFile, `
+def calculate_total():
+    return 100
+
+def checkout_py():
+    return calculate_total()
+`);
+
+    const runtime = await withRuntime(projectPath, projectId);
+    const watcher = runtime.startIndexer(projectPath, projectId);
+    try {
+        await waitFor(() => {
+            const jsTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'calculateTotal', jsFile);
+            const pyTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'calculate_total', pyFile);
+            return Boolean(jsTarget && pyTarget);
+        });
+
+        const jsTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'calculateTotal', jsFile) as { id: string };
+        const pyTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'calculate_total', pyFile) as { id: string };
+        const jsPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: jsTarget.id, min_confidence: 0.0 })).content[0].text);
+        const pyPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyTarget.id, min_confidence: 0.0 })).content[0].text);
+        const jsCallers = jsPayload.definite_callers.map((caller: any) => caller.qualified_name);
+        const pyCallers = pyPayload.definite_callers.map((caller: any) => caller.qualified_name);
+
+        return {
+            name: 'language_depth_js_python_callers',
+            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python callers: ${pyCallers.join(', ') || 'none'}.`,
+            passed: jsCallers.includes('checkout') && pyCallers.includes('checkout_py')
+        };
+    } finally {
+        await watcher.close();
+    }
+}
+
 function writeReports(results: BenchmarkResult[]) {
     const outDir = path.join(process.cwd(), 'benchmark', 'results');
     fs.mkdirSync(outDir, { recursive: true });
@@ -273,7 +323,8 @@ async function main() {
         await benchmarkSymbolDiscovery(),
         await benchmarkAstCallers(),
         await benchmarkAstImportResolverPrecision(),
-        await benchmarkIncrementalReindex()
+        await benchmarkIncrementalReindex(),
+        await benchmarkLanguageDepth()
     ];
     writeReports(results);
     console.log(JSON.stringify(results, null, 2));

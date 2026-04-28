@@ -5,7 +5,7 @@
 Check:
 
 - `PROJECT_PATH` points to the repository root.
-- The project has supported files: `.ts`, `.tsx`, or `.py`.
+- The project has supported files: `.ts`, `.tsx`, `.js`, `.jsx`, or `.py`.
 - Files are not under ignored directories such as `.git`, `node_modules`, or `dist`.
 - Files are not excluded by secret detection.
 
@@ -67,4 +67,3 @@ Override:
 ```powershell
 $env:MCP_MEMORY_DB_PATH="C:\Users\you\.mcp-memory-server\memory.db"
 ```
-

@@ -393,6 +393,10 @@ async function testGitAwareIncrementalIndexing(
     const deletedPath = path.join(projectPath, 'src', 'deleted.ts');
     const movablePath = path.join(projectPath, 'src', 'movable.ts');
     const movedPath = path.join(projectPath, 'src', 'moved.ts');
+    const restoredPath = path.join(projectPath, 'src', 'restored.ts');
+    const fallbackOldPath = path.join(projectPath, 'src', 'fallback-old.ts');
+    const fallbackNewPath = path.join(projectPath, 'src', 'fallback-new.ts');
+    const buildOutputPath = path.join(projectPath, 'build', 'generated.ts');
 
     execFileSync('git', ['init'], { cwd: projectPath, stdio: 'ignore' });
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
@@ -401,19 +405,21 @@ async function testGitAwareIncrementalIndexing(
     writeFile(filePath, 'export function indexedOnce() { return 1; }\n');
     writeFile(deletedPath, 'export function deletedLater() { return 1; }\n');
     writeFile(movablePath, 'export function movedSymbol() { return 1; }\n');
+    writeFile(restoredPath, 'export function restoredSymbol() { return 1; }\n');
     execFileSync('git', ['add', '.'], { cwd: projectPath });
     execFileSync('git', ['commit', '-m', 'initial incremental files'], { cwd: projectPath, stdio: 'ignore' });
 
+    const baseBranch = execFileSync('git', ['branch', '--show-current'], { cwd: projectPath, encoding: 'utf8' }).trim() || 'master';
     const first = await indexFile(filePath, projectId);
     assert(first.indexed === true, 'indexFile should index new files');
     const second = await indexFile(filePath, projectId);
     assert(second.skipped === true && second.reason === 'unchanged', 'indexFile should skip unchanged files by blob hash');
+    await indexFile(restoredPath, projectId);
 
     const fileRow = db.prepare("SELECT git_blob_sha FROM files WHERE project_id = ? AND path = ?")
       .get(projectId, filePath) as { git_blob_sha: string | null } | undefined;
     assert(Boolean(fileRow?.git_blob_sha), 'files.git_blob_sha should be populated');
 
-    const baseBranch = execFileSync('git', ['branch', '--show-current'], { cwd: projectPath, encoding: 'utf8' }).trim() || 'master';
     execFileSync('git', ['checkout', '-b', 'checkout-edge'], { cwd: projectPath, stdio: 'ignore' });
     writeFile(filePath, 'export function indexedOnce() { return 5; }\n');
     execFileSync('git', ['add', '.'], { cwd: projectPath });
@@ -426,6 +432,20 @@ async function testGitAwareIncrementalIndexing(
     execFileSync('git', ['checkout', baseBranch], { cwd: projectPath, stdio: 'ignore' });
     await reconcileProjectFiles(projectPath, projectId);
 
+    execFileSync('git', ['checkout', '-b', 'delete-restore-edge'], { cwd: projectPath, stdio: 'ignore' });
+    fs.unlinkSync(restoredPath);
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-m', 'delete restored symbol on branch'], { cwd: projectPath, stdio: 'ignore' });
+    await reconcileProjectFiles(projectPath, projectId);
+    const deletedOnBranch = db.prepare("SELECT is_deleted FROM symbols WHERE project_id = ? AND file_path = ? AND name = ?")
+      .get(projectId, restoredPath, 'restoredSymbol') as { is_deleted: number } | undefined;
+    assert(deletedOnBranch?.is_deleted === 1, 'checkout reconciliation should mark symbols deleted on a branch');
+    execFileSync('git', ['checkout', baseBranch], { cwd: projectPath, stdio: 'ignore' });
+    await reconcileProjectFiles(projectPath, projectId);
+    const restoredOnBase = db.prepare("SELECT is_deleted FROM symbols WHERE project_id = ? AND file_path = ? AND name = ?")
+      .get(projectId, restoredPath, 'restoredSymbol') as { is_deleted: number } | undefined;
+    assert(restoredOnBase?.is_deleted === 0, 'checkout reconciliation should reactivate symbols restored by branch checkout');
+
     await indexFile(movablePath, projectId);
     await callTool('save_decision', {
         project_id: projectId,
@@ -433,6 +453,7 @@ async function testGitAwareIncrementalIndexing(
         related_symbols: ['movedSymbol']
     });
     execFileSync('git', ['mv', 'src/movable.ts', 'src/moved.ts'], { cwd: projectPath });
+    writeFile(movedPath, 'export function movedSymbol() { return 9; }\n');
     const renamed = await reindexChangedFiles(projectPath, projectId);
     assert(renamed.renamed === 1, 'reindexChangedFiles should reconcile git renames');
     const movedSymbol = db.prepare("SELECT id, is_deleted FROM symbols WHERE project_id = ? AND file_path = ? AND name = ?")
@@ -443,8 +464,37 @@ async function testGitAwareIncrementalIndexing(
         symbol: 'movedSymbol'
     }));
     assert(movedDecisions.some(decision => decision.summary === 'Keep movedSymbol decision links after file moves'), 'rename reconciliation should preserve decision-symbol links');
+    const movedBody = db.prepare("SELECT body FROM symbols WHERE project_id = ? AND file_path = ? AND name = ? AND is_deleted = 0")
+      .get(projectId, movedPath, 'movedSymbol') as { body: string } | undefined;
+    assert(movedBody?.body.includes('return 9'), 'move plus content change should preserve links and update the moved symbol body');
     execFileSync('git', ['add', '.'], { cwd: projectPath });
     execFileSync('git', ['commit', '-m', 'rename movable symbol'], { cwd: projectPath, stdio: 'ignore' });
+
+    writeFile(fallbackOldPath, 'export function fallbackSymbol() { return 1; }\n');
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-m', 'add fallback rename fixture'], { cwd: projectPath, stdio: 'ignore' });
+    await indexFile(fallbackOldPath, projectId);
+    fs.unlinkSync(fallbackOldPath);
+    writeFile(fallbackNewPath, 'export function fallbackSymbol() { return 1000; }\nexport function fallbackExtra() { return 2; }\n');
+    const fallback = await reindexChangedFiles(projectPath, projectId);
+    assert(fallback.deleted >= 1 && fallback.indexed >= 1, 'rename fallback should delete the old path and index the new path when Git does not report a rename');
+    const fallbackOld = db.prepare("SELECT is_deleted FROM symbols WHERE project_id = ? AND file_path = ? AND name = ?")
+      .get(projectId, fallbackOldPath, 'fallbackSymbol') as { is_deleted: number } | undefined;
+    const fallbackNew = db.prepare("SELECT body, is_deleted FROM symbols WHERE project_id = ? AND file_path = ? AND name = ?")
+      .get(projectId, fallbackNewPath, 'fallbackSymbol') as { body: string; is_deleted: number } | undefined;
+    assert(fallbackOld?.is_deleted === 1, 'rename fallback should mark the old path symbol as deleted');
+    assert(fallbackNew?.is_deleted === 0 && fallbackNew.body.includes('return 1000'), 'rename fallback should index the replacement symbol at the new path');
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-m', 'fallback rename by delete and add'], { cwd: projectPath, stdio: 'ignore' });
+
+    writeFile(buildOutputPath, 'export function generatedBuildSymbol() { return 1; }\n');
+    const generatedChanged = await reindexChangedFiles(projectPath, projectId);
+    assert(generatedChanged.changed_files === 0, 'generated build output should be excluded from changed-file indexing');
+    const generatedReconciled = await reconcileProjectFiles(projectPath, projectId);
+    assert(generatedReconciled.excluded === 0, 'generated build output should be skipped during full reconciliation');
+    const generatedSymbol = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0")
+      .get(projectId, 'generatedBuildSymbol') as { id: string } | undefined;
+    assert(!generatedSymbol, 'generated build output should not create active symbols');
 
     writeFile(filePath, 'export function indexedOnce() { return 2; }\n');
     const changed = await reindexChangedFiles(projectPath, projectId);

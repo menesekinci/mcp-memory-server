@@ -18,6 +18,8 @@ const LANGUAGES = {
     '.py': { language: Python as any, name: 'python' },
 };
 
+const IGNORED_PATH_PATTERN = /(^|[\/\\])(\.git|node_modules|dist|build|coverage)([\/\\]|$)/;
+
 class IndexWorkerPool {
     private queue: string[] = [];
     private isProcessing = false;
@@ -56,7 +58,7 @@ export function startIndexer(projectPath: string, projectId = 'default') {
     console.error(`Indexing project: ${projectPath}`);
 
     const watcher = chokidar.watch(projectPath, {
-        ignored: (filePath) => /(^|[\/\\])(\.git|node_modules|dist)([\/\\]|$)/.test(filePath),
+        ignored: (filePath) => IGNORED_PATH_PATTERN.test(filePath),
         persistent: true,
     });
 
@@ -215,17 +217,21 @@ export async function reindexChangedFiles(projectPath: string, projectId = 'defa
 export function listChangedSourceFiles(projectPath: string) {
     return [...new Set(gitChangedFiles(projectPath)
         .map(file => path.resolve(projectPath, file))
-        .filter(file => isSupportedSourceFile(file)))];
+        .filter(file => !isIgnoredProjectPath(file) && isSupportedSourceFile(file)))];
 }
 
 export async function reconcileProjectFiles(projectPath: string, projectId = 'default') {
     const renames = reconcileRenamedFiles(projectPath, projectId);
-    const rows = db.prepare("SELECT path FROM files WHERE project_id = ?").all(projectId) as Array<{ path: string }>;
+    const rows = db.prepare("SELECT path, git_blob_sha FROM files WHERE project_id = ?").all(projectId) as Array<{ path: string; git_blob_sha: string | null }>;
     let deleted = 0;
     for (const row of rows) {
         if (path.resolve(row.path).startsWith(path.resolve(projectPath)) && !fs.existsSync(row.path)) {
-            markFileDeleted(row.path, projectId);
-            deleted++;
+            const activeSymbols = db.prepare("SELECT COUNT(*) as count FROM symbols WHERE project_id = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, row.path) as { count: number };
+            if (row.git_blob_sha || activeSymbols.count > 0) {
+                markFileDeleted(row.path, projectId);
+                deleted++;
+            }
         }
     }
 
@@ -290,13 +296,17 @@ function collectSupportedSourceFiles(projectPath: string) {
         if (!fs.existsSync(dir)) return;
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
             const fullPath = path.join(dir, entry.name);
-            if (/(^|[\/\\])(\.git|node_modules|dist)([\/\\]|$)/.test(fullPath)) continue;
+            if (isIgnoredProjectPath(fullPath)) continue;
             if (entry.isDirectory()) walk(fullPath);
             else if (isSupportedSourceFile(fullPath)) files.push(fullPath);
         }
     }
     walk(root);
     return files;
+}
+
+function isIgnoredProjectPath(filePath: string) {
+    return IGNORED_PATH_PATTERN.test(filePath);
 }
 
 function gitBlobSha(content: string) {

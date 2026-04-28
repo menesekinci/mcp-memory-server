@@ -75,16 +75,12 @@ Recommended flow:
 
 ## Active v0.3 Validation Backlog
 
-Keep this section as the live task list for hardening the project. When an item is completed, remove it from this backlog and add a short note under `Completed Validation Notes` explaining what changed and why.
+Keep this section aligned with `TODO.md` as the live task list for hardening the project. When an item is completed, remove it from this backlog and add a short note under `Completed Validation Notes` explaining what changed and why.
 
 ### Git Edge-Case Tests
 
-- [ ] Branch checkout where symbols are deleted and later restored.
 - [ ] Merge scenario where the same file changes on both branches.
 - [ ] Rebase or history rewrite reconciliation.
-- [ ] File move plus content change in the same operation.
-- [ ] Fallback behavior when Git rename detection does not report a rename.
-- [ ] Generated/build output remains excluded from indexing.
 - [ ] Large branch switch does not leave stale active symbols.
 
 ### Task-Success Benchmarks
@@ -139,6 +135,10 @@ Keep this section as the live task list for hardening the project. When an item 
 - v0.3 validation started by adding `bugfix_investigation_narrowing`, a task-shaped benchmark that combines compact symbol search, conversation history, and project decisions. This was added to move benchmark coverage beyond pure output-size checks.
 - Reconciliation now scans supported source files and compares blob hashes so clean branch checkout or rewrite states can update same-path symbol bodies even when `git diff HEAD` is empty.
 - Integration tests now cover same-path content changes after branch checkout, because stale symbol bodies after checkout would make the MCP unreliable during real agent work.
+- Git edge-case tests now cover branch checkout deletion/restoration so symbols are marked deleted on one branch and reactivated when restored by checkout.
+- Git rename tests now cover move plus content change so decision links survive while the moved symbol body is refreshed.
+- Rename fallback tests now cover delete-and-add behavior when Git does not report a rename, ensuring the old symbol is deleted and the replacement path is indexed.
+- Generated output under `build`, `dist`, `coverage`, `node_modules`, and `.git` is ignored by changed-file and reconciliation scans to avoid indexing build artifacts.
 
 ## Verification
 
@@ -155,4 +155,3 @@ npm run benchmark
 ```
 
 Run `npm run build` after changes that affect the MCP server runtime, because Codex is configured to launch the compiled `dist/src/index.js`.
-

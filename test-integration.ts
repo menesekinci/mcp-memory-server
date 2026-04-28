@@ -207,6 +207,141 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
     assert(allDecisions.length === 1 && allDecisions[0].status === 'superseded', 'forget_session raw_and_derived should supersede derived decisions');
 }
 
+async function testProjectIsolationContracts(db: TestDb, callTool: (name: string, args?: Record<string, any>) => Promise<any>) {
+    const projectA = 'isolation-a';
+    const projectB = 'isolation-b';
+    const sessionA = 'isolation-session-a';
+    const sessionB = 'isolation-session-b';
+    const now = Date.now();
+    const old = now - 1000;
+    const symbolA = `${projectA}:shared.ts:function:sharedBoundary`;
+    const symbolB = `${projectB}:shared.ts:function:sharedBoundary`;
+    const callerA = `${projectA}:caller.ts:function:callShared`;
+    const callerB = `${projectB}:caller.ts:function:callShared`;
+
+    for (const projectId of [projectA, projectB]) {
+        db.prepare("INSERT INTO sessions (id, project_id, started_at, ended_at) VALUES (?, ?, ?, ?)")
+          .run(projectId === projectA ? sessionA : sessionB, projectId, old, old + 100);
+    }
+
+    db.prepare(`
+        INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `).run(symbolA, projectA, 'sharedBoundary', 'sharedBoundary', 'function', 'shared-a.ts', 1, 3, 'function sharedBoundary()', 'function sharedBoundary() { return "A"; }', 'typescript', now);
+    db.prepare(`
+        INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `).run(symbolB, projectB, 'sharedBoundary', 'sharedBoundary', 'function', 'shared-b.ts', 1, 3, 'function sharedBoundary()', 'function sharedBoundary() { return "B"; }', 'typescript', now);
+    db.prepare(`
+        INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `).run(callerA, projectA, 'callShared', 'callShared', 'function', 'caller-a.ts', 1, 3, 'function callShared()', 'function callShared() { return sharedBoundary(); }', 'typescript', now);
+    db.prepare(`
+        INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `).run(callerB, projectB, 'callShared', 'callShared', 'function', 'caller-b.ts', 1, 3, 'function callShared()', 'function callShared() { return sharedBoundary(); }', 'typescript', now);
+
+    db.prepare(`
+        INSERT INTO symbol_calls (caller_symbol_id, target_symbol_id, target_name, target_file_path, project_id, file_path, line, confidence, resolution_method)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(callerA, symbolA, 'sharedBoundary', 'shared-a.ts', projectA, 'caller-a.ts', 1, 1.0, 'test_static');
+    db.prepare(`
+        INSERT INTO symbol_calls (caller_symbol_id, target_symbol_id, target_name, target_file_path, project_id, file_path, line, confidence, resolution_method)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(callerB, symbolB, 'sharedBoundary', 'shared-b.ts', projectB, 'caller-b.ts', 1, 1.0, 'test_static');
+
+    await callTool('save_message', {
+        session_id: sessionA,
+        role: 'user',
+        content: 'isolationUniqueA discussed sharedBoundary',
+        explicit_symbols: ['sharedBoundary']
+    });
+    await callTool('save_message', {
+        session_id: sessionB,
+        role: 'user',
+        content: 'isolationUniqueB discussed sharedBoundary',
+        explicit_symbols: ['sharedBoundary']
+    });
+    await callTool('save_decision', {
+        project_id: projectA,
+        summary: 'Isolation decision A',
+        related_symbols: ['sharedBoundary']
+    });
+    await callTool('save_decision', {
+        project_id: projectB,
+        summary: 'Isolation decision B',
+        related_symbols: ['sharedBoundary']
+    });
+
+    const oldMessageA = 'isolation-old-message-a';
+    const oldMessageB = 'isolation-old-message-b';
+    db.prepare("INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(oldMessageA, sessionA, 'user', 'old isolation A sharedBoundary', old);
+    db.prepare("INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(oldMessageB, sessionB, 'user', 'old isolation B sharedBoundary', old);
+    db.prepare("INSERT INTO message_symbol_references (message_id, symbol_id, confidence, reference_type, extraction_source) VALUES (?, ?, ?, ?, ?)")
+      .run(oldMessageA, symbolA, 1.0, 'mentioned', 'explicit_tool_call');
+    db.prepare("INSERT INTO message_symbol_references (message_id, symbol_id, confidence, reference_type, extraction_source) VALUES (?, ?, ?, ?, ?)")
+      .run(oldMessageB, symbolB, 1.0, 'mentioned', 'explicit_tool_call');
+
+    const lookupA = parseToolJson<any[]>(await callTool('lookup_symbol', { project_id: projectA, name: 'sharedBoundary' }));
+    const lookupB = parseToolJson<any[]>(await callTool('lookup_symbol', { project_id: projectB, name: 'sharedBoundary' }));
+    assert(lookupA.length === 1 && lookupA[0].file === 'shared-a.ts', 'lookup_symbol should isolate project A');
+    assert(lookupB.length === 1 && lookupB[0].file === 'shared-b.ts', 'lookup_symbol should isolate project B');
+
+    const searchA = parseToolJson<any[]>(await callTool('search_symbols', { project_id: projectA, query: 'sharedBoundary' }));
+    const searchB = parseToolJson<any[]>(await callTool('search_symbols', { project_id: projectB, query: 'sharedBoundary' }));
+    assert(searchA.every(symbol => symbol.file !== 'shared-b.ts'), 'search_symbols should not leak project B into project A');
+    assert(searchB.every(symbol => symbol.file !== 'shared-a.ts'), 'search_symbols should not leak project A into project B');
+
+    const statusA = parseToolJson<{ total_symbols: number }>(await callTool('index_status', { project_id: projectA }));
+    const statusB = parseToolJson<{ total_symbols: number }>(await callTool('index_status', { project_id: projectB }));
+    assert(statusA.total_symbols === 2 && statusB.total_symbols === 2, 'index_status should count per project');
+
+    const historyA = parseToolJson<any[]>(await callTool('search_history', { project_id: projectA, query: 'isolationUniqueA' }));
+    const historyB = parseToolJson<any[]>(await callTool('search_history', { project_id: projectB, query: 'isolationUniqueB' }));
+    const crossHistory = parseToolJson<any[]>(await callTool('search_history', { project_id: projectA, query: 'isolationUniqueB' }));
+    assert(historyA.length === 1 && historyB.length === 1 && crossHistory.length === 0, 'search_history should isolate projects');
+
+    const decisionsA = parseToolJson<any[]>(await callTool('get_decisions', { project_id: projectA, symbol: 'sharedBoundary' }));
+    const decisionsB = parseToolJson<any[]>(await callTool('get_decisions', { project_id: projectB, symbol: 'sharedBoundary' }));
+    assert(decisionsA.some(decision => decision.summary === 'Isolation decision A') && !decisionsA.some(decision => decision.summary === 'Isolation decision B'), 'get_decisions should isolate project A');
+    assert(decisionsB.some(decision => decision.summary === 'Isolation decision B') && !decisionsB.some(decision => decision.summary === 'Isolation decision A'), 'get_decisions should isolate project B');
+
+    const changedA = parseToolJson<any[]>(await callTool('changed_since', { project_id: projectA, since: old }));
+    const changedB = parseToolJson<any[]>(await callTool('changed_since', { project_id: projectB, since: old }));
+    assert(changedA.every(symbol => symbol.project_id === projectA), 'changed_since should isolate project A');
+    assert(changedB.every(symbol => symbol.project_id === projectB), 'changed_since should isolate project B');
+
+    const discussedA = parseToolJson<any[]>(await callTool('symbols_discussed_and_changed', { project_id: projectA }));
+    const discussedB = parseToolJson<any[]>(await callTool('symbols_discussed_and_changed', { project_id: projectB }));
+    assert(discussedA.length > 0 && discussedA.every(row => row.file_path !== 'shared-b.ts'), 'symbols_discussed_and_changed should isolate project A');
+    assert(discussedB.length > 0 && discussedB.every(row => row.file_path !== 'shared-a.ts'), 'symbols_discussed_and_changed should isolate project B');
+
+    const regressionA = parseToolJson<any[]>(await callTool('find_regression_candidates', {
+        project_id: projectA,
+        changed_on: now - 10000,
+        min_confidence: 0.5
+    }));
+    const regressionB = parseToolJson<any[]>(await callTool('find_regression_candidates', {
+        project_id: projectB,
+        changed_on: now - 10000,
+        min_confidence: 0.5
+    }));
+    assert(regressionA.length > 0 && regressionA.every(row => row.file_path !== 'shared-b.ts'), 'find_regression_candidates should isolate project A');
+    assert(regressionB.length > 0 && regressionB.every(row => row.file_path !== 'shared-a.ts'), 'find_regression_candidates should isolate project B');
+
+    const callersA = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', { symbol_id: symbolA, min_confidence: 0.0 }));
+    const callersB = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', { symbol_id: symbolB, min_confidence: 0.0 }));
+    assert(callersA.definite_callers.every(caller => caller.file_path !== 'caller-b.ts'), 'find_callers should isolate project A');
+    assert(callersB.definite_callers.every(caller => caller.file_path !== 'caller-a.ts'), 'find_callers should isolate project B');
+
+    const contextA = parseToolJson<{ active_decisions: any[] }>(await callTool('context_since_last_session', { project_id: projectA }));
+    const contextB = parseToolJson<{ active_decisions: any[] }>(await callTool('context_since_last_session', { project_id: projectB }));
+    assert(contextA.active_decisions.some(decision => decision.summary === 'Isolation decision A') && !contextA.active_decisions.some(decision => decision.summary === 'Isolation decision B'), 'context_since_last_session should isolate project A');
+    assert(contextB.active_decisions.some(decision => decision.summary === 'Isolation decision B') && !contextB.active_decisions.some(decision => decision.summary === 'Isolation decision A'), 'context_since_last_session should isolate project B');
+}
+
 async function testIndexerEdges(db: TestDb, startIndexer: (projectPath: string, projectId?: string) => any, callTool: (name: string, args?: Record<string, any>) => Promise<any>) {
     const projectA = 'indexer-a';
     const projectB = 'indexer-b';
@@ -695,6 +830,9 @@ async function main() {
 
     await testMcpTools(runtime.db, runtime.callTool);
     console.log('MCP tool integration tests passed.');
+
+    await testProjectIsolationContracts(runtime.db, runtime.callTool);
+    console.log('Project isolation contract tests passed.');
 
     await testIndexerEdges(runtime.db, runtime.startIndexer, runtime.callTool);
     console.log('Indexer edge tests passed.');

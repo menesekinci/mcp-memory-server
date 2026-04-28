@@ -10,6 +10,15 @@ When an item is completed:
 
 ## Active v0.3 Validation
 
+Recommended remaining order:
+
+1. Database compatibility tests.
+2. Task-success benchmark suite.
+3. CI matrix and release smoke tests.
+4. NPX/setup smoke tests.
+5. Performance and scale tests.
+6. Dogfooding report.
+
 ### Task-Success Benchmarks
 
 - [ ] Bug fix task success: correct root symbol is selected, not just fewer tokens.
@@ -17,10 +26,6 @@ When an item is completed:
 - [ ] Regression narrowing: changed symbols and prior decisions identify likely candidates.
 - [ ] PR risk summary: changed symbols and decision conflicts are surfaced compactly.
 - [ ] Compare MCP-assisted discovery against classic shell search by files read, bodies read, token size, and false positives.
-
-### Tool Contract Tests
-
-- [ ] Every tool preserves `project_id` isolation.
 
 ### Database Compatibility
 
@@ -64,3 +69,4 @@ When an item is completed:
 - History rewrite tests now cover amended commits so same-path symbol bodies refresh after rewrite-style changes.
 - Large branch switch tests now remove and replace a batch of files to ensure stale symbols are deleted and replacement symbols become active.
 - Tool contract tests now cover compact body omission, compact ref resolution, invalid or missing symbol body identifiers, deleted-symbol hiding, test caller filtering, and confidence filtering.
+- Project isolation contract tests now cover core symbol, history, decision, caller, context, changed-symbol, discussion, and regression tools across two project IDs with same-name symbols.

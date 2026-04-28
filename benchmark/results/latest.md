@@ -13,4 +13,4 @@
 | task_success_regression_narrowing | pass | - | - | - | Changed symbols: calculateCheckoutTax, stableCheckoutLabel; linked decisions: calculateCheckoutTax owns regional tax behavior; discussed changed: calculateCheckoutTax. |
 | task_success_pr_risk_summary | pass | - | - | - | Changed symbols: publicCheckoutApi, internalAuditMarker; related decisions: publicCheckoutApi is an external contract. |
 | task_success_discovery_workload | pass | 718 | 152 | 78.8 | Classic files read: 20; MCP bodies read: 1; classic false-positive files: 19. |
-| performance_scale_10k_symbols | pass | - | - | - | Cold index: 4211ms for 1000 files/10001 symbols; search: 3.6ms; caller: 1.9ms; incremental: 121ms for 1 changed file; risk: 1184ms for 26 changed files; db: 7.3MB. |
+| performance_scale_10k_symbols | pass | - | - | - | Cold index: 4356ms for 1000 files/10001 symbols; search: 3.5ms; caller: 1.9ms; incremental: 118.1ms for 1 changed file; risk: 1138.5ms for 26 changed files; db: 7.3MB. |

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-28T22:25:42.889Z",
+  "generated_at": "2026-04-28T22:29:43.040Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
@@ -78,7 +78,7 @@
     },
     {
       "name": "performance_scale_10k_symbols",
-      "notes": "Cold index: 4211ms for 1000 files/10001 symbols; search: 3.6ms; caller: 1.9ms; incremental: 121ms for 1 changed file; risk: 1184ms for 26 changed files; db: 7.3MB.",
+      "notes": "Cold index: 4356ms for 1000 files/10001 symbols; search: 3.5ms; caller: 1.9ms; incremental: 118.1ms for 1 changed file; risk: 1138.5ms for 26 changed files; db: 7.3MB.",
       "passed": true
     }
   ]

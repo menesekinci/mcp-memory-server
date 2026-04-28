@@ -90,6 +90,7 @@ See [docs/agent-flows.md](docs/agent-flows.md) and [AGENTS.md](AGENTS.md) for ta
 - [Architecture](docs/architecture.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Demo Transcript](docs/demo.md)
+- [Plugin Polish](docs/plugin.md)
 - [Roadmap](docs/ROADMAP.md)
 
 ## Local Development

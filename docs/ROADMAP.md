@@ -54,6 +54,6 @@ This roadmap keeps the project focused. Each phase should improve either measure
 
 ## Phase 6 - Plugin Polish
 
-- [ ] Codex plugin/skill packaging for MCP-first behavior.
-- [ ] Optional VS Code UI for index status and symbol lookup.
-- [ ] One-command setup helpers for common MCP clients.
+- [x] Codex plugin/skill packaging for MCP-first behavior.
+- [x] Document optional VS Code UI direction for index status and symbol lookup.
+- [x] One-command setup helpers for common MCP clients.

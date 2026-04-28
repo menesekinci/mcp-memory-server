@@ -5,12 +5,15 @@
   "main": "dist/src/index.js",
   "bin": {
     "codex-mcp-memory-server": "bin/codex-mcp-memory-server.js",
-    "mcp-memory-server": "bin/codex-mcp-memory-server.js"
+    "mcp-memory-server": "bin/codex-mcp-memory-server.js",
+    "setup-codex-mcp-memory": "bin/setup-codex-mcp-memory.js"
   },
   "files": [
+    ".agents",
     "bin",
     "dist/src",
     "docs",
+    "plugins",
     "README.md",
     "AGENTS.md"
   ],

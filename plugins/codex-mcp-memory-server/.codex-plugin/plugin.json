@@ -1,0 +1,33 @@
+{
+  "name": "codex-mcp-memory-server",
+  "version": "0.1.0",
+  "description": "MCP-first symbol memory workflow for Codex coding agents.",
+  "author": {
+    "name": "menesekinci",
+    "email": "",
+    "url": "https://github.com/menesekinci"
+  },
+  "homepage": "https://github.com/menesekinci/mcp-memory-server#readme",
+  "repository": "https://github.com/menesekinci/mcp-memory-server",
+  "license": "ISC",
+  "keywords": ["mcp", "codex", "memory", "symbols", "code-intelligence"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Codex MCP Memory",
+    "shortDescription": "Use compact symbol memory before reading source.",
+    "longDescription": "Adds MCP-first guidance and a ready MCP server definition for Codex MCP Memory Server.",
+    "developerName": "menesekinci",
+    "category": "Productivity",
+    "capabilities": ["Read", "Code"],
+    "websiteURL": "https://github.com/menesekinci/mcp-memory-server",
+    "privacyPolicyURL": "https://github.com/menesekinci/mcp-memory-server",
+    "termsOfServiceURL": "https://github.com/menesekinci/mcp-memory-server",
+    "defaultPrompt": [
+      "Use MCP memory to find the relevant symbol first.",
+      "Map changed files to symbols before reviewing.",
+      "Save this project decision to MCP memory."
+    ],
+    "brandColor": "#16A34A"
+  }
+}

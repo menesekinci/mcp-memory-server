@@ -11,6 +11,7 @@ Codex MCP Memory Server is a symbol-aware MCP server for coding agents. It index
 - [Architecture](architecture.md)
 - [Troubleshooting](troubleshooting.md)
 - [Demo Transcript](demo.md)
+- [Plugin Polish](plugin.md)
 - [Roadmap](ROADMAP.md)
 
 ## Core Idea

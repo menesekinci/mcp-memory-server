@@ -1,0 +1,20 @@
+{
+  "name": "mcp-memory-server",
+  "interface": {
+    "displayName": "MCP Memory Server"
+  },
+  "plugins": [
+    {
+      "name": "codex-mcp-memory-server",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex-mcp-memory-server"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

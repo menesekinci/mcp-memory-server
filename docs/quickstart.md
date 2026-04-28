@@ -2,6 +2,16 @@
 
 ## Add To Codex
 
+Use the setup helper:
+
+```powershell
+npx -y -p codex-mcp-memory-server setup-codex-mcp-memory `
+  --project-path "C:\path\to\your\repo" `
+  --project-id "your-project-id"
+```
+
+Or add the MCP server manually:
+
 ```powershell
 codex mcp add codex-mcp-memory-server `
   --env PROJECT_PATH="C:\path\to\your\repo" `
@@ -66,4 +76,3 @@ Expected result shape:
   "excluded_files": 0
 }
 ```
-

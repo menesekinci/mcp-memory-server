@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "codex-mcp-memory-server": {
+      "command": "npx",
+      "args": ["-y", "codex-mcp-memory-server"],
+      "env": {
+        "PROJECT_PATH": "${workspaceFolder}",
+        "PROJECT_ID": "${workspaceFolderBasename}"
+      }
+    }
+  }
+}

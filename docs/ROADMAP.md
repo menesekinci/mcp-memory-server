@@ -40,10 +40,10 @@ This roadmap keeps the project focused. Each phase should improve either measure
 
 ## Phase 4 - Docs And Adoption
 
-- [ ] Split README details into `docs/quickstart.md`, `docs/tools.md`, `docs/benchmarks.md`, `docs/agent-flows.md`, and `docs/troubleshooting.md`.
-- [ ] Add a short demo GIF/video.
-- [ ] Add hosted docs.
-- [ ] Add more before/after examples.
+- [x] Split README details into `docs/quickstart.md`, `docs/tools.md`, `docs/benchmarks.md`, `docs/agent-flows.md`, and `docs/troubleshooting.md`.
+- [x] Add a short demo transcript.
+- [x] Add hosted docs workflow for GitHub Pages.
+- [x] Add more before/after examples.
 
 ## Phase 5 - Language Depth Before Breadth
 

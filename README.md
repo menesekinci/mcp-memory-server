@@ -24,8 +24,8 @@ We measured a simple discovery task in this repository: find the `callTool` symb
 Classic text search returned every matching import, test call, helper reference, and the actual function:
 
 ```text
-chars=5827
-approx_tokens=1457
+chars=6055
+approx_tokens=1514
 ```
 
 The MCP symbol search returned one compact symbol result:
@@ -39,7 +39,7 @@ chars=180
 approx_tokens=45
 ```
 
-That is roughly **96.9% fewer tokens** and a **32.4x smaller discovery output** before reading any source body. Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
+That is roughly **97.0% fewer tokens** and a **33.6x smaller discovery output** before reading any source body. Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
 
 ## Quick Start With Codex
 
@@ -110,7 +110,7 @@ Available tools:
 
 - `index_status`: Count active, deleted, indexed, hashed, and excluded project records.
 - `reindex_changed_files`: Re-index only Git changed, staged, and untracked source files.
-- `reconcile_index`: Mark missing indexed files as deleted after checkout, merge, or rewrite.
+- `reconcile_index`: Mark missing indexed files as deleted and preserve symbol links across Git renames after checkout, merge, or rewrite.
 - `changed_symbols_risk`: Summarize symbols in Git changed files and linked decisions.
 - `search_symbols`: Search compact symbol metadata by partial name, kind, or file.
 - `lookup_symbol`: Exact-name symbol lookup. Compact by default; supports `verbose` and `include_body`.

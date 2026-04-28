@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-04-28T11:25:08.152Z",
+  "generated_at": "2026-04-28T11:34:39.858Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
-      "classic_chars": 5827,
-      "classic_tokens": 1457,
+      "classic_chars": 6055,
+      "classic_tokens": 1514,
       "mcp_chars": 180,
       "mcp_tokens": 45,
-      "token_savings_pct": 96.9,
+      "token_savings_pct": 97,
       "notes": "Find the callTool symbol with broad text search versus compact MCP symbol search.",
       "passed": true
     },

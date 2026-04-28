@@ -193,6 +193,7 @@ export async function indexFile(filePath: string, projectId = 'default', options
 }
 
 export async function reindexChangedFiles(projectPath: string, projectId = 'default', options: { force?: boolean } = {}) {
+    const renames = reconcileRenamedFiles(projectPath, projectId);
     const uniqueFiles = listChangedSourceFiles(projectPath);
     let indexed = 0;
     let skipped = 0;
@@ -205,7 +206,7 @@ export async function reindexChangedFiles(projectPath: string, projectId = 'defa
         else if (result.skipped) skipped++;
     }
 
-    return { changed_files: uniqueFiles.length, indexed, skipped, deleted };
+    return { changed_files: uniqueFiles.length, indexed, skipped, deleted, renamed: renames.renamed_files };
 }
 
 export function listChangedSourceFiles(projectPath: string) {
@@ -215,6 +216,7 @@ export function listChangedSourceFiles(projectPath: string) {
 }
 
 export function reconcileProjectFiles(projectPath: string, projectId = 'default') {
+    const renames = reconcileRenamedFiles(projectPath, projectId);
     const rows = db.prepare("SELECT path FROM files WHERE project_id = ?").all(projectId) as Array<{ path: string }>;
     let deleted = 0;
     for (const row of rows) {
@@ -223,7 +225,21 @@ export function reconcileProjectFiles(projectPath: string, projectId = 'default'
             deleted++;
         }
     }
-    return { reconciled_files: rows.length, deleted_files: deleted };
+    return { reconciled_files: rows.length, deleted_files: deleted, renamed_files: renames.renamed_files };
+}
+
+export function reconcileRenamedFiles(projectPath: string, projectId = 'default') {
+    const renames = gitRenamedFiles(projectPath);
+    let renamedFiles = 0;
+    let movedSymbols = 0;
+    for (const rename of renames) {
+        const moved = migrateRenamedFile(projectId, rename.oldPath, rename.newPath);
+        if (moved > 0) {
+            renamedFiles++;
+            movedSymbols += moved;
+        }
+    }
+    return { renamed_files: renamedFiles, moved_symbols: movedSymbols };
 }
 
 function fileRecordId(projectId: string, filePath: string) {
@@ -271,6 +287,77 @@ function gitChangedFiles(projectPath: string) {
     }
 
     return [...files];
+}
+
+function gitRenamedFiles(projectPath: string) {
+    const renames: Array<{ oldPath: string; newPath: string }> = [];
+    const commands: string[][] = [
+        ['diff', '--name-status', '-M', 'HEAD'],
+        ['diff', '--name-status', '-M', '--cached']
+    ];
+
+    for (const args of commands) {
+        try {
+            const output = execFileSync('git', ['-C', projectPath, ...args], { encoding: 'utf8' });
+            for (const line of output.split(/\r?\n/).filter(Boolean)) {
+                const [status, oldRelative, newRelative] = line.split(/\t/);
+                if (!status?.startsWith('R') || !oldRelative || !newRelative) continue;
+                const oldPath = path.resolve(projectPath, oldRelative);
+                const newPath = path.resolve(projectPath, newRelative);
+                if (isSupportedSourceFile(oldPath) && isSupportedSourceFile(newPath)) {
+                    renames.push({ oldPath, newPath });
+                }
+            }
+        } catch {
+            // Non-git projects or repositories without HEAD have no rename metadata.
+        }
+    }
+
+    return renames;
+}
+
+function migrateRenamedFile(projectId: string, oldPath: string, newPath: string) {
+    const oldSymbols = db.prepare("SELECT id, kind, name FROM symbols WHERE project_id = ? AND file_path = ?")
+      .all(projectId, oldPath) as Array<{ id: string; kind: string; name: string }>;
+    if (oldSymbols.length === 0) return 0;
+
+    const now = Date.now();
+    const transaction = db.transaction(() => {
+        for (const symbol of oldSymbols) {
+            const newId = `${projectId}:${newPath}:${symbol.kind}:${symbol.name}`;
+            const existing = db.prepare("SELECT id FROM symbols WHERE id = ?").get(newId) as { id: string } | undefined;
+            if (!existing) {
+                db.prepare(`
+                    INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, commit_sha, updated_at, is_deleted)
+                    SELECT ?, project_id, name, qualified_name, kind, ?, start_line, end_line, signature, body, language, commit_sha, ?, 0
+                    FROM symbols WHERE id = ?
+                `).run(newId, newPath, now, symbol.id);
+            }
+            db.prepare("UPDATE message_symbol_references SET symbol_id = ? WHERE symbol_id = ?").run(newId, symbol.id);
+            db.prepare("UPDATE decision_symbol_references SET symbol_id = ? WHERE symbol_id = ?").run(newId, symbol.id);
+            db.prepare("UPDATE symbol_history SET symbol_id = ? WHERE symbol_id = ?").run(newId, symbol.id);
+            db.prepare("UPDATE symbol_calls SET caller_symbol_id = ?, file_path = ? WHERE caller_symbol_id = ?").run(newId, newPath, symbol.id);
+            db.prepare("UPDATE symbol_calls SET target_symbol_id = ? WHERE target_symbol_id = ?").run(newId, symbol.id);
+            db.prepare("DELETE FROM symbols WHERE id = ?").run(symbol.id);
+        }
+        db.prepare("UPDATE symbol_calls SET file_path = ? WHERE project_id = ? AND file_path = ?").run(newPath, projectId, oldPath);
+        db.prepare("UPDATE symbol_calls SET target_file_path = ? WHERE project_id = ? AND target_file_path = ?").run(newPath, projectId, oldPath);
+        db.prepare(`
+            INSERT INTO files (id, project_id, path, language, last_indexed_at, git_blob_sha, is_excluded)
+            SELECT ?, project_id, ?, language, ?, git_blob_sha, is_excluded
+            FROM files WHERE id = ?
+            ON CONFLICT(id) DO UPDATE SET
+                path=excluded.path,
+                language=excluded.language,
+                last_indexed_at=excluded.last_indexed_at,
+                git_blob_sha=excluded.git_blob_sha,
+                is_excluded=excluded.is_excluded
+        `).run(fileRecordId(projectId, newPath), newPath, now, fileRecordId(projectId, oldPath));
+        db.prepare("DELETE FROM files WHERE id = ?").run(fileRecordId(projectId, oldPath));
+    });
+
+    transaction();
+    return oldSymbols.length;
 }
 
 function extractSymbols(tree: Parser.Tree, content: string, filePath: string, language: string, projectId = 'default') {

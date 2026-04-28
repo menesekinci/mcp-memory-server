@@ -35,7 +35,7 @@ This roadmap keeps the project focused. Each phase should improve either measure
 - [x] Re-index only changed files when possible.
 - [x] Track file blob hashes in `files.git_blob_sha`.
 - [x] Reconcile symbols after checkout/merge/rewrite.
-- [ ] Improve rename/move handling.
+- [x] Improve rename/move handling.
 - [x] Produce PR/session risk summaries from changed symbols and decisions.
 
 ## Phase 4 - Docs And Adoption

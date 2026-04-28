@@ -327,6 +327,8 @@ async function testGitAwareIncrementalIndexing(
     const projectPath = createTempDir('mcp-memory-incremental');
     const filePath = path.join(projectPath, 'src', 'incremental.ts');
     const deletedPath = path.join(projectPath, 'src', 'deleted.ts');
+    const movablePath = path.join(projectPath, 'src', 'movable.ts');
+    const movedPath = path.join(projectPath, 'src', 'moved.ts');
 
     execFileSync('git', ['init'], { cwd: projectPath, stdio: 'ignore' });
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
@@ -334,6 +336,7 @@ async function testGitAwareIncrementalIndexing(
 
     writeFile(filePath, 'export function indexedOnce() { return 1; }\n');
     writeFile(deletedPath, 'export function deletedLater() { return 1; }\n');
+    writeFile(movablePath, 'export function movedSymbol() { return 1; }\n');
     execFileSync('git', ['add', '.'], { cwd: projectPath });
     execFileSync('git', ['commit', '-m', 'initial incremental files'], { cwd: projectPath, stdio: 'ignore' });
 
@@ -345,6 +348,26 @@ async function testGitAwareIncrementalIndexing(
     const fileRow = db.prepare("SELECT git_blob_sha FROM files WHERE project_id = ? AND path = ?")
       .get(projectId, filePath) as { git_blob_sha: string | null } | undefined;
     assert(Boolean(fileRow?.git_blob_sha), 'files.git_blob_sha should be populated');
+
+    await indexFile(movablePath, projectId);
+    await callTool('save_decision', {
+        project_id: projectId,
+        summary: 'Keep movedSymbol decision links after file moves',
+        related_symbols: ['movedSymbol']
+    });
+    execFileSync('git', ['mv', 'src/movable.ts', 'src/moved.ts'], { cwd: projectPath });
+    const renamed = await reindexChangedFiles(projectPath, projectId);
+    assert(renamed.renamed === 1, 'reindexChangedFiles should reconcile git renames');
+    const movedSymbol = db.prepare("SELECT id, is_deleted FROM symbols WHERE project_id = ? AND file_path = ? AND name = ?")
+      .get(projectId, movedPath, 'movedSymbol') as { id: string; is_deleted: number } | undefined;
+    assert(movedSymbol?.is_deleted === 0, 'renamed files should keep symbols active at the new path');
+    const movedDecisions = parseToolJson<any[]>(await callTool('get_decisions', {
+        project_id: projectId,
+        symbol: 'movedSymbol'
+    }));
+    assert(movedDecisions.some(decision => decision.summary === 'Keep movedSymbol decision links after file moves'), 'rename reconciliation should preserve decision-symbol links');
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-m', 'rename movable symbol'], { cwd: projectPath, stdio: 'ignore' });
 
     writeFile(filePath, 'export function indexedOnce() { return 2; }\n');
     const changed = await reindexChangedFiles(projectPath, projectId);

@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
+import Database from 'better-sqlite3';
 
 type TestDb = typeof import('./src/db').default;
 
@@ -340,6 +341,158 @@ async function testProjectIsolationContracts(db: TestDb, callTool: (name: string
     const contextB = parseToolJson<{ active_decisions: any[] }>(await callTool('context_since_last_session', { project_id: projectB }));
     assert(contextA.active_decisions.some(decision => decision.summary === 'Isolation decision A') && !contextA.active_decisions.some(decision => decision.summary === 'Isolation decision B'), 'context_since_last_session should isolate project A');
     assert(contextB.active_decisions.some(decision => decision.summary === 'Isolation decision B') && !contextB.active_decisions.some(decision => decision.summary === 'Isolation decision A'), 'context_since_last_session should isolate project B');
+}
+
+function testLegacyDatabaseCompatibility() {
+    const legacyDir = createTempDir('mcp-memory-legacy-db');
+    const dbPath = path.join(legacyDir, 'legacy.sqlite');
+    const legacyDb = new Database(dbPath);
+    const now = Date.now();
+    legacyDb.exec(`
+        CREATE TABLE symbols (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            qualified_name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            start_line INTEGER NOT NULL,
+            end_line INTEGER NOT NULL,
+            signature TEXT,
+            body TEXT,
+            language TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE symbol_history (
+            id TEXT PRIMARY KEY,
+            symbol_id TEXT NOT NULL REFERENCES symbols(id),
+            version INTEGER NOT NULL,
+            body TEXT,
+            signature TEXT,
+            start_line INTEGER,
+            end_line INTEGER,
+            commit_sha TEXT NOT NULL,
+            commit_message TEXT,
+            commit_author TEXT,
+            commit_at INTEGER NOT NULL,
+            change_type TEXT NOT NULL
+        );
+
+        CREATE TABLE files (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            language TEXT,
+            last_indexed_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            started_at INTEGER NOT NULL,
+            ended_at INTEGER
+        );
+
+        CREATE TABLE messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            role TEXT NOT NULL CHECK(role IN ('user', 'agent')),
+            content TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE message_symbol_references (
+            message_id TEXT NOT NULL REFERENCES messages(id),
+            symbol_id TEXT NOT NULL REFERENCES symbols(id),
+            confidence REAL NOT NULL,
+            reference_type TEXT NOT NULL CHECK(reference_type IN ('mentioned', 'modified', 'explained', 'debugged', 'rejected', 'approved')),
+            extraction_source TEXT NOT NULL CHECK(extraction_source IN ('explicit_tool_call', 'code_block', 'natural_language', 'agent_summary')),
+            PRIMARY KEY (message_id, symbol_id)
+        );
+
+        CREATE TABLE session_summaries (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            summary TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE project_decisions (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            rationale TEXT,
+            decided_at INTEGER NOT NULL,
+            source_session TEXT REFERENCES sessions(id),
+            status TEXT NOT NULL CHECK(status IN ('active', 'superseded', 'under_review'))
+        );
+
+        CREATE TABLE decision_symbol_references (
+            decision_id TEXT NOT NULL REFERENCES project_decisions(id),
+            symbol_id TEXT NOT NULL REFERENCES symbols(id),
+            PRIMARY KEY (decision_id, symbol_id)
+        );
+
+        CREATE TABLE symbol_calls (
+            caller_symbol_id TEXT NOT NULL REFERENCES symbols(id),
+            target_symbol_id TEXT REFERENCES symbols(id),
+            target_name TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            line INTEGER NOT NULL,
+            confidence REAL NOT NULL,
+            resolution_method TEXT NOT NULL,
+            PRIMARY KEY (caller_symbol_id, target_name, file_path, line)
+        );
+    `);
+    legacyDb.prepare(`
+        INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('legacy-project:legacy.ts:function:legacySymbol', 'legacy-project', 'legacySymbol', 'legacySymbol', 'function', 'legacy.ts', 1, 3, 'function legacySymbol()', 'function legacySymbol() { return 1; }', 'typescript', now);
+    legacyDb.prepare("INSERT INTO files (id, project_id, path, language, last_indexed_at) VALUES (?, ?, ?, ?, ?)")
+      .run('legacy-project:legacy.ts', 'legacy-project', 'legacy.ts', 'typescript', now);
+    legacyDb.prepare("INSERT INTO sessions (id, project_id, started_at, ended_at) VALUES (?, ?, ?, ?)")
+      .run('legacy-session', 'legacy-project', now - 1000, now - 500);
+    legacyDb.prepare("INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run('legacy-message', 'legacy-session', 'user', 'legacy message content', now);
+    legacyDb.prepare("INSERT INTO project_decisions (id, project_id, summary, rationale, decided_at, source_session, status) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run('legacy-decision', 'legacy-project', 'Legacy decision survives migration', 'legacy rationale', now, 'legacy-session', 'active');
+    legacyDb.close();
+
+    const script = `
+const { initDb, default: db } = require('./src/db');
+initDb();
+initDb();
+const requiredColumns = {
+  symbols: ['commit_sha', 'is_deleted'],
+  symbol_history: ['branch', 'pr_reference'],
+  files: ['git_blob_sha', 'is_excluded'],
+  sessions: ['title', 'tags'],
+  project_decisions: ['superseded_by', 'confidence'],
+  symbol_calls: ['target_file_path']
+};
+for (const [table, columns] of Object.entries(requiredColumns)) {
+  const existing = db.prepare('PRAGMA table_info(' + table + ')').all().map(column => column.name);
+  for (const column of columns) {
+    if (!existing.includes(column)) throw new Error(table + '.' + column + ' was not migrated');
+  }
+}
+const symbol = db.prepare('SELECT name, is_deleted FROM symbols WHERE id = ?').get('legacy-project:legacy.ts:function:legacySymbol');
+if (!symbol || symbol.name !== 'legacySymbol' || symbol.is_deleted !== 0) throw new Error('legacy symbol did not survive migration');
+const decision = db.prepare('SELECT summary, confidence FROM project_decisions WHERE id = ?').get('legacy-decision');
+if (!decision || decision.summary !== 'Legacy decision survives migration' || decision.confidence !== 1) throw new Error('legacy decision did not survive migration');
+const message = db.prepare('SELECT content FROM messages WHERE id = ?').get('legacy-message');
+if (!message || message.content !== 'legacy message content') throw new Error('legacy message did not survive migration');
+db.prepare('INSERT INTO messages_fts(rowid, content) SELECT rowid, content FROM messages WHERE id = ?').run('legacy-message');
+const fts = db.prepare('SELECT COUNT(*) as count FROM messages_fts WHERE messages_fts MATCH ?').get('legacy');
+if (fts.count !== 1) throw new Error('messages_fts was not available after migration');
+`;
+    execFileSync(process.execPath, ['-r', 'ts-node/register', '-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, MCP_MEMORY_DB_PATH: dbPath },
+        stdio: 'pipe'
+    });
 }
 
 async function testIndexerEdges(db: TestDb, startIndexer: (projectPath: string, projectId?: string) => any, callTool: (name: string, args?: Record<string, any>) => Promise<any>) {
@@ -833,6 +986,9 @@ async function main() {
 
     await testProjectIsolationContracts(runtime.db, runtime.callTool);
     console.log('Project isolation contract tests passed.');
+
+    testLegacyDatabaseCompatibility();
+    console.log('Legacy database compatibility tests passed.');
 
     await testIndexerEdges(runtime.db, runtime.startIndexer, runtime.callTool);
     console.log('Indexer edge tests passed.');

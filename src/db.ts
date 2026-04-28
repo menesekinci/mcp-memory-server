@@ -140,14 +140,23 @@ export function initDb() {
         CREATE INDEX IF NOT EXISTS idx_calls_caller ON symbol_calls(caller_symbol_id);
     `);
 
-    const callColumns = db.prepare("PRAGMA table_info(symbol_calls)").all() as Array<{ name: string }>;
-    if (!callColumns.some(column => column.name === 'target_file_path')) {
-        db.prepare("ALTER TABLE symbol_calls ADD COLUMN target_file_path TEXT").run();
-    }
+    ensureColumn('symbols', 'commit_sha', 'TEXT');
+    ensureColumn('symbols', 'is_deleted', 'INTEGER DEFAULT 0');
+    ensureColumn('symbol_history', 'branch', 'TEXT');
+    ensureColumn('symbol_history', 'pr_reference', 'TEXT');
+    ensureColumn('files', 'git_blob_sha', 'TEXT');
+    ensureColumn('files', 'is_excluded', 'INTEGER DEFAULT 0');
+    ensureColumn('sessions', 'title', 'TEXT');
+    ensureColumn('sessions', 'tags', 'TEXT');
+    ensureColumn('project_decisions', 'superseded_by', 'TEXT REFERENCES project_decisions(id)');
+    ensureColumn('project_decisions', 'confidence', 'REAL DEFAULT 1.0');
+    ensureColumn('symbol_calls', 'target_file_path', 'TEXT');
+}
 
-    const fileColumns = db.prepare("PRAGMA table_info(files)").all() as Array<{ name: string }>;
-    if (!fileColumns.some(column => column.name === 'git_blob_sha')) {
-        db.prepare("ALTER TABLE files ADD COLUMN git_blob_sha TEXT").run();
+function ensureColumn(tableName: string, columnName: string, definition: string) {
+    const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+    if (!columns.some(column => column.name === columnName)) {
+        db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`).run();
     }
 }
 

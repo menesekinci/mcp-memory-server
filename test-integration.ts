@@ -112,6 +112,7 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
     }));
     assert(symbolSearch.length === 1 && !('body' in symbolSearch[0]), 'search_symbols should return compact symbol matches');
     assert('ref' in symbolSearch[0] && !('id' in symbolSearch[0]), 'search_symbols should use compact refs by default');
+    assert(!JSON.stringify(symbolSearch).includes('return 1'), 'compact search_symbols output should not leak symbol bodies');
 
     const symbolBody = parseToolJson<any>(await callTool('get_symbol_body', {
         symbol_id: symbolId
@@ -123,6 +124,17 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
         ref: lookup[0].ref
     }));
     assert(symbolBodyByRef.body.includes('calculateTotal'), 'get_symbol_body should resolve compact refs');
+
+    const invalidRef = await callTool('get_symbol_body', {
+        project_id: projectId,
+        ref: 'bad-ref'
+    });
+    assert(invalidRef.content[0].text === 'Symbol not found.', 'invalid compact refs should return a useful not-found message');
+
+    const missingSymbolId = await callTool('get_symbol_body', {
+        project_id: projectId
+    });
+    assert(missingSymbolId.content[0].text === 'Symbol not found.', 'missing symbol_id/ref should return a useful not-found message');
 
     const searchResults = parseToolJson<any[]>(await callTool('search_history', {
         project_id: projectId,
@@ -138,6 +150,26 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
     const allCallers = [...callers.definite_callers, ...(callers as any).probable_callers];
     assert(allCallers.length === 1, 'find_callers should exclude test files when requested');
     assert(allCallers[0].qualified_name === 'checkout', 'find_callers returned the wrong caller');
+
+    const highConfidenceCallers = parseToolJson<{ definite_callers: any[]; probable_callers: any[] }>(await callTool('find_callers', {
+        symbol_id: symbolId,
+        include_tests: true,
+        min_confidence: 0.9
+    }));
+    assert(highConfidenceCallers.probable_callers.length === 0, 'min_confidence should filter fuzzy probable callers');
+
+    db.prepare("UPDATE symbols SET is_deleted = 1 WHERE id = ?").run(symbolId);
+    const deletedLookup = parseToolJson<any[]>(await callTool('lookup_symbol', {
+        project_id: projectId,
+        name: 'calculateTotal'
+    }));
+    assert(deletedLookup.length === 0, 'lookup_symbol should hide deleted symbols');
+    const deletedSearch = parseToolJson<any[]>(await callTool('search_symbols', {
+        project_id: projectId,
+        query: 'calculateTotal'
+    }));
+    assert(deletedSearch.every(symbol => symbol.name !== 'calculateTotal'), 'search_symbols should hide deleted symbols');
+    db.prepare("UPDATE symbols SET is_deleted = 0 WHERE id = ?").run(symbolId);
 
     await callTool('save_decision', {
         project_id: projectId,
@@ -533,6 +565,103 @@ async function testGitAwareIncrementalIndexing(
     assert(status.hashed_files > 0 && status.indexed_files > 0, 'index_status should expose file/hash counts');
 }
 
+async function testGitMergeRewriteAndLargeSwitch(
+    db: TestDb,
+    indexFile: (filePath: string, projectId?: string, options?: { force?: boolean }) => Promise<any>,
+    reconcileProjectFiles: (projectPath: string, projectId?: string) => Promise<any>
+) {
+    const projectId = 'git-merge-rewrite';
+    const projectPath = createTempDir('mcp-memory-merge-rewrite');
+    const mergePath = path.join(projectPath, 'src', 'merge.ts');
+    const rewritePath = path.join(projectPath, 'src', 'rewrite.ts');
+    const stablePath = path.join(projectPath, 'src', 'stable.ts');
+
+    execFileSync('git', ['init'], { cwd: projectPath, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: projectPath });
+
+    writeFile(mergePath, `
+export function mainBranchSymbol() { return 1; }
+export function sideBranchSymbol() { return 1; }
+`);
+    writeFile(rewritePath, 'export function rewriteSymbol() { return 1; }\n');
+    writeFile(stablePath, 'export function stableAcrossSwitch() { return 1; }\n');
+    for (let i = 0; i < 12; i++) {
+        writeFile(path.join(projectPath, 'src', `large-${i}.ts`), `export function staleSymbol${i}() { return ${i}; }\n`);
+    }
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-m', 'initial merge rewrite fixtures'], { cwd: projectPath, stdio: 'ignore' });
+
+    await reconcileProjectFiles(projectPath, projectId);
+    const baseBranch = execFileSync('git', ['branch', '--show-current'], { cwd: projectPath, encoding: 'utf8' }).trim() || 'master';
+
+    execFileSync('git', ['checkout', '-b', 'merge-side'], { cwd: projectPath, stdio: 'ignore' });
+    writeFile(mergePath, `
+export function mainBranchSymbol() { return 1; }
+export function sideBranchSymbol() { return 20; }
+`);
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-m', 'change side branch symbol'], { cwd: projectPath, stdio: 'ignore' });
+
+    execFileSync('git', ['checkout', baseBranch], { cwd: projectPath, stdio: 'ignore' });
+    writeFile(mergePath, `
+export function mainBranchSymbol() { return 10; }
+export function sideBranchSymbol() { return 1; }
+`);
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-m', 'change main branch symbol'], { cwd: projectPath, stdio: 'ignore' });
+    try {
+        execFileSync('git', ['merge', '--no-ff', 'merge-side', '-m', 'merge side branch changes'], { cwd: projectPath, stdio: 'ignore' });
+    } catch {
+        writeFile(mergePath, `
+export function mainBranchSymbol() { return 10; }
+export function sideBranchSymbol() { return 20; }
+`);
+        execFileSync('git', ['add', '.'], { cwd: projectPath });
+        execFileSync('git', ['commit', '-m', 'resolve merge side branch changes'], { cwd: projectPath, stdio: 'ignore' });
+    }
+    const mergeReconciled = await reconcileProjectFiles(projectPath, projectId);
+    assert(mergeReconciled.indexed >= 1, 'merge reconciliation should reindex files changed on both branches');
+    const mainSymbol = db.prepare("SELECT body FROM symbols WHERE project_id = ? AND file_path = ? AND name = ? AND is_deleted = 0")
+      .get(projectId, mergePath, 'mainBranchSymbol') as { body: string } | undefined;
+    const sideSymbol = db.prepare("SELECT body FROM symbols WHERE project_id = ? AND file_path = ? AND name = ? AND is_deleted = 0")
+      .get(projectId, mergePath, 'sideBranchSymbol') as { body: string } | undefined;
+    assert(mainSymbol?.body.includes('return 10'), 'merge reconciliation should keep main-branch symbol updates');
+    assert(sideSymbol?.body.includes('return 20'), 'merge reconciliation should keep side-branch symbol updates');
+
+    execFileSync('git', ['checkout', '-b', 'rewrite-edge'], { cwd: projectPath, stdio: 'ignore' });
+    writeFile(rewritePath, 'export function rewriteSymbol() { return 2; }\n');
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-m', 'rewrite symbol once'], { cwd: projectPath, stdio: 'ignore' });
+    await indexFile(rewritePath, projectId);
+    writeFile(rewritePath, 'export function rewriteSymbol() { return 3; }\n');
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '--amend', '-m', 'rewrite symbol amended'], { cwd: projectPath, stdio: 'ignore' });
+    const rewriteReconciled = await reconcileProjectFiles(projectPath, projectId);
+    assert(rewriteReconciled.indexed >= 1, 'history rewrite reconciliation should reindex amended same-path content');
+    const rewriteSymbol = db.prepare("SELECT body FROM symbols WHERE project_id = ? AND file_path = ? AND name = ? AND is_deleted = 0")
+      .get(projectId, rewritePath, 'rewriteSymbol') as { body: string } | undefined;
+    assert(rewriteSymbol?.body.includes('return 3'), 'history rewrite reconciliation should update amended symbol bodies');
+
+    execFileSync('git', ['checkout', baseBranch], { cwd: projectPath, stdio: 'ignore' });
+    await reconcileProjectFiles(projectPath, projectId);
+    execFileSync('git', ['checkout', '-b', 'large-switch-edge'], { cwd: projectPath, stdio: 'ignore' });
+    for (let i = 0; i < 12; i++) {
+        fs.unlinkSync(path.join(projectPath, 'src', `large-${i}.ts`));
+        writeFile(path.join(projectPath, 'src', `replacement-${i}.ts`), `export function replacementSymbol${i}() { return ${i + 100}; }\n`);
+    }
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-m', 'large branch switch replacement'], { cwd: projectPath, stdio: 'ignore' });
+    const largeSwitch = await reconcileProjectFiles(projectPath, projectId);
+    assert(largeSwitch.deleted_files >= 12 && largeSwitch.indexed >= 12, 'large branch switch should delete stale symbols and index replacements');
+    const staleActive = db.prepare("SELECT COUNT(*) as count FROM symbols WHERE project_id = ? AND name LIKE 'staleSymbol%' AND is_deleted = 0")
+      .get(projectId) as { count: number };
+    const replacementsActive = db.prepare("SELECT COUNT(*) as count FROM symbols WHERE project_id = ? AND name LIKE 'replacementSymbol%' AND is_deleted = 0")
+      .get(projectId) as { count: number };
+    assert(staleActive.count === 0, 'large branch switch should not leave stale active symbols');
+    assert(replacementsActive.count === 12, 'large branch switch should index replacement symbols');
+}
+
 async function testGitHistory(db: TestDb, indexGitHistory: (projectPath: string, projectId?: string) => void) {
     const projectId = 'git-history';
     const projectPath = createTempDir('mcp-memory-git');
@@ -578,6 +707,9 @@ async function main() {
 
     await testGitAwareIncrementalIndexing(runtime.db, runtime.indexFile, runtime.reindexChangedFiles, runtime.reconcileProjectFiles, runtime.callTool);
     console.log('Git-aware incremental indexing tests passed.');
+
+    await testGitMergeRewriteAndLargeSwitch(runtime.db, runtime.indexFile, runtime.reconcileProjectFiles);
+    console.log('Git merge, rewrite, and large switch tests passed.');
 
     await testGitHistory(runtime.db, runtime.indexGitHistory);
     console.log('Git history tests passed.');

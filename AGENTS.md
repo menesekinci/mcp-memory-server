@@ -77,12 +77,6 @@ Recommended flow:
 
 Keep this section aligned with `TODO.md` as the live task list for hardening the project. When an item is completed, remove it from this backlog and add a short note under `Completed Validation Notes` explaining what changed and why.
 
-### Git Edge-Case Tests
-
-- [ ] Merge scenario where the same file changes on both branches.
-- [ ] Rebase or history rewrite reconciliation.
-- [ ] Large branch switch does not leave stale active symbols.
-
 ### Task-Success Benchmarks
 
 - [ ] Bug fix task success: correct root symbol is selected, not just fewer tokens.
@@ -93,13 +87,7 @@ Keep this section aligned with `TODO.md` as the live task list for hardening the
 
 ### Tool Contract Tests
 
-- [ ] Compact outputs never leak full symbol bodies.
-- [ ] Compact `ref` values resolve reliably through `get_symbol_body`.
-- [ ] Invalid `ref` and missing `symbol_id` cases return useful errors.
 - [ ] Every tool preserves `project_id` isolation.
-- [ ] Deleted symbols are hidden unless a tool explicitly opts into deleted results.
-- [ ] `include_tests=false` filters AST and fuzzy callers consistently.
-- [ ] `min_confidence` filtering works for definite and probable callers.
 
 ### Database Compatibility
 
@@ -139,6 +127,10 @@ Keep this section aligned with `TODO.md` as the live task list for hardening the
 - Git rename tests now cover move plus content change so decision links survive while the moved symbol body is refreshed.
 - Rename fallback tests now cover delete-and-add behavior when Git does not report a rename, ensuring the old symbol is deleted and the replacement path is indexed.
 - Generated output under `build`, `dist`, `coverage`, `node_modules`, and `.git` is ignored by changed-file and reconciliation scans to avoid indexing build artifacts.
+- Merge reconciliation tests now cover same-file changes on both branches, including a conflict-resolution path, so final merged symbol bodies are reindexed correctly.
+- History rewrite tests now cover amended commits so same-path symbol bodies refresh after rewrite-style changes.
+- Large branch switch tests now remove and replace a batch of files to ensure stale symbols are deleted and replacement symbols become active.
+- Tool contract tests now cover compact body omission, compact ref resolution, invalid or missing symbol body identifiers, deleted-symbol hiding, test caller filtering, and confidence filtering.
 
 ## Verification
 

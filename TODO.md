@@ -10,30 +10,7 @@ When an item is completed:
 
 ## Active v0.3 Validation
 
-Recommended remaining order:
-
-1. NPX runtime smoke tests.
-2. Performance and scale tests.
-3. Dogfooding report.
-
-### Performance And Scale
-
-- [ ] Cold index timing for a synthetic 1k-file project.
-- [ ] Search/caller latency for roughly 10k symbols.
-- [ ] Incremental reindex timing after a small file change in a larger project.
-- [ ] Database size growth for repeated indexing and history records.
-- [ ] `changed_symbols_risk` latency on a broad working-tree diff.
-
-### Cross-Platform And Release
-
-- [ ] `npx -y codex-mcp-memory-server` smoke test.
-- [ ] Release checklist covers version bump, changelog/release notes, tag, GitHub release, npm publish, and post-publish install verification.
-
-### Dogfooding
-
-- [ ] Use this MCP on this repository for at least three real maintenance tasks.
-- [ ] Record which MCP tools were used, how many files/bodies were read, and what was missing.
-- [ ] Convert repeated dogfooding pain points into tool contract tests or benchmark scenarios.
+No active v0.3 validation items remain. Add new items here only when a concrete gap is found during real repository use.
 
 ## Completed Notes
 
@@ -52,3 +29,6 @@ Recommended remaining order:
 - Database compatibility tests now create a v0.1-style SQLite database in a subprocess, run current `initDb()` twice, verify new columns/tables exist, and confirm legacy symbol, message, and decision records survive migration.
 - Task-success benchmarks now cover bug-fix root symbol selection, refactor impact analysis, regression narrowing, PR risk summaries, and discovery workload comparison so v0.3 measures useful task outcomes, not just smaller text output.
 - CI now runs on Windows, Ubuntu, and macOS with `npm ci`, `npm test`, `npm run benchmark`, `npm run build`, and `npm pack --dry-run`; release smoke also packages the tarball and runs the setup helper through `npx -p`.
+- NPX runtime smoke is now covered by `npm run smoke:npx`, which packs the project, launches `codex-mcp-memory-server` through `npx -p`, waits for the stdio server ready log, and shuts it down.
+- Performance and scale validation now runs as `performance_scale_10k_symbols`, covering cold indexing for 1k files/10k symbols, search latency, caller latency, incremental reindex, database growth, and broad changed-symbol risk latency.
+- Dogfooding findings were recorded in `docs/dogfooding.md`, and release steps were moved into `docs/release.md` so v0.3 validation tracking stays complete but readable.

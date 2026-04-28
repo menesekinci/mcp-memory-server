@@ -22,17 +22,17 @@ Agents often spend a lot of tokens finding the right file or function before rea
 Current benchmark task: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=3565
+classic_tokens=3639
 mcp_tokens=45
-savings=98.7%
-smaller_output=79.2x
+savings=98.8%
+smaller_output=80.9x
 ```
 
 Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
 
 See [docs/benchmarks.md](docs/benchmarks.md) for benchmark scope and output files.
 
-The benchmark suite also includes real task-shaped checks such as bug-fix root symbol selection, refactor impact analysis, regression narrowing, PR risk summaries, noisy bug investigation narrowing, AST caller precision, incremental Git reindexing, and language-depth coverage.
+The benchmark suite also includes real task-shaped checks such as bug-fix root symbol selection, refactor impact analysis, regression narrowing, PR risk summaries, noisy bug investigation narrowing, AST caller precision, incremental Git reindexing, language-depth coverage, and synthetic 10k-symbol scale smoke.
 
 ## Quick Start
 
@@ -94,12 +94,15 @@ See [docs/agent-flows.md](docs/agent-flows.md) and [AGENTS.md](AGENTS.md) for ta
 - [Demo Transcript](docs/demo.md)
 - [Plugin Polish](docs/plugin.md)
 - [Roadmap](docs/ROADMAP.md)
+- [Dogfooding Report](docs/dogfooding.md)
+- [Release Checklist](docs/release.md)
 
 ## Local Development
 
 ```powershell
 npm install
 npm test
+npm run smoke:npx
 npm run build
 ```
 

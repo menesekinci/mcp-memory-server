@@ -67,12 +67,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: NPX runtime smoke
+        run: npm run smoke:npx
+
       - name: Package tarball
         id: pack
         shell: bash
         run: |
           npm pack --json > pack.json
-          echo "file=$(node -e 'const pack=require("./pack.json"); console.log(pack[0].filename)')" >> "$GITHUB_OUTPUT"
+          node -e "const fs=require('fs'); const pack=JSON.parse(fs.readFileSync('pack.json','utf8')); console.log('file='+pack[0].filename)" >> "$GITHUB_OUTPUT"
 
       - name: Smoke setup helper from packed package
         run: npx -y -p "./${{ steps.pack.outputs.file }}" setup-codex-mcp-memory --project-path "$PWD" --project-id ci-smoke --dry-run

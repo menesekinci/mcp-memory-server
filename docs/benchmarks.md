@@ -28,16 +28,17 @@ benchmark/results/latest.md
 | `task_success_regression_narrowing` | Confirms changed symbols, prior discussion, and decisions narrow regression candidates. |
 | `task_success_pr_risk_summary` | Confirms changed-symbol risk summaries surface linked decisions for PR review. |
 | `task_success_discovery_workload` | Compares classic search and MCP-assisted discovery by files read, bodies read, token size, and false positives. |
+| `performance_scale_10k_symbols` | Smoke-tests cold indexing, search, caller lookup, incremental reindex, DB growth, and broad changed-symbol risk on a synthetic 10k-symbol project. |
 
 ## Latest Result
 
 The current measured discovery task is: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=3565
+classic_tokens=3639
 mcp_tokens=45
-savings=98.7%
-smaller_output=79.2x
+savings=98.8%
+smaller_output=80.9x
 ```
 
 Token counts are practical estimates using `characters / 4`. The benchmark measures discovery output size, not final answer quality.
@@ -51,4 +52,5 @@ The suite now includes task-shaped checks beyond raw output size:
 - Regression candidate narrowing through recent symbol and decision context.
 - PR risk summary through changed symbols and linked decisions.
 - Discovery workload comparison by files read, bodies read, token size, and false positives.
+- Performance and scale regression smoke for a synthetic 1k-file, 10k-symbol project.
 - Git edge cases such as checkout, merge, rename, delete, staged, and untracked states.

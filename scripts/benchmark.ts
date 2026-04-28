@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { performance } from 'perf_hooks';
 
 type BenchmarkResult = {
     name: string;
@@ -88,6 +89,7 @@ async function initGitRepo(projectPath: string, message: string) {
     execFileSync('git', ['init'], { cwd: projectPath, stdio: 'ignore' });
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
     execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: projectPath });
+    execFileSync('git', ['config', 'core.autocrlf', 'false'], { cwd: projectPath });
     execFileSync('git', ['add', '.'], { cwd: projectPath });
     execFileSync('git', ['commit', '-m', message], { cwd: projectPath, stdio: 'ignore' });
 }
@@ -117,32 +119,23 @@ async function benchmarkSymbolDiscovery(): Promise<BenchmarkResult> {
     const projectPath = process.cwd();
     const projectId = 'benchmark-discovery';
     const runtime = await withRuntime(projectPath, projectId);
-    const watcher = runtime.startIndexer(projectPath, projectId);
-    try {
-        await waitFor(() => {
-            const row = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0")
-              .get(projectId, 'callTool');
-            return Boolean(row);
-        }, 8000);
+    await runtime.indexFile(path.join(projectPath, 'src', 'server.ts'), projectId, { force: true });
 
-        const classic = classicSearch(projectPath, 'callTool');
-        const mcp = await runtime.callTool('search_symbols', { project_id: projectId, query: 'callTool', limit: 5 });
-        const mcpText = mcp.content[0].text;
-        const classicTokens = approxTokens(classic);
-        const mcpTokens = approxTokens(mcpText);
-        return {
-            name: 'symbol_discovery_callTool',
-            classic_chars: classic.length,
-            classic_tokens: classicTokens,
-            mcp_chars: mcpText.length,
-            mcp_tokens: mcpTokens,
-            token_savings_pct: Math.round((1 - (mcpTokens / classicTokens)) * 1000) / 10,
-            notes: 'Find the callTool symbol with broad text search versus compact MCP symbol search.',
-            passed: mcpTokens < classicTokens
-        };
-    } finally {
-        await watcher.close();
-    }
+    const classic = classicSearch(projectPath, 'callTool');
+    const mcp = await runtime.callTool('search_symbols', { project_id: projectId, query: 'callTool', limit: 5 });
+    const mcpText = mcp.content[0].text;
+    const classicTokens = approxTokens(classic);
+    const mcpTokens = approxTokens(mcpText);
+    return {
+        name: 'symbol_discovery_callTool',
+        classic_chars: classic.length,
+        classic_tokens: classicTokens,
+        mcp_chars: mcpText.length,
+        mcp_tokens: mcpTokens,
+        token_savings_pct: Math.round((1 - (mcpTokens / classicTokens)) * 1000) / 10,
+        notes: 'Find the callTool symbol with broad text search versus compact MCP symbol search.',
+        passed: mcpTokens < classicTokens
+    };
 }
 
 async function benchmarkAstCallers(): Promise<BenchmarkResult> {
@@ -737,6 +730,98 @@ export function paymentLog${i}() {
     }
 }
 
+async function benchmarkPerformanceScale(): Promise<BenchmarkResult> {
+    const projectPath = createTempDir('mcp-memory-benchmark-scale');
+    const projectId = 'benchmark-scale';
+    const fileCount = 1000;
+    const functionsPerFile = 10;
+    const targetFile = path.join(projectPath, 'src', 'module-0000.ts');
+
+    for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
+        const lines: string[] = [];
+        for (let fnIndex = 0; fnIndex < functionsPerFile; fnIndex++) {
+            const name = `scaleSymbol_${fileIndex}_${fnIndex}`;
+            if (fileIndex === 0 && fnIndex === 0) {
+                lines.push(`export function ${name}() { return "target"; }`);
+            } else if (fileIndex === 0 && fnIndex === 1) {
+                lines.push(`export function ${name}() { return scaleSymbol_0_0(); }`);
+            } else {
+                lines.push(`export function ${name}() { return ${fileIndex + fnIndex}; }`);
+            }
+        }
+        writeFile(path.join(projectPath, 'src', `module-${String(fileIndex).padStart(4, '0')}.ts`), `${lines.join('\n')}\n`);
+    }
+    await initGitRepo(projectPath, 'initial scale benchmark');
+
+    const runtime = await withRuntime(projectPath, projectId);
+    const sourceFiles = recursiveFiles(projectPath).filter(file => file.endsWith('.ts'));
+
+    const coldStartedAt = performance.now();
+    for (const file of sourceFiles) {
+        await runtime.indexFile(file, projectId);
+    }
+    const coldIndexMs = Math.round(performance.now() - coldStartedAt);
+
+    const searchStartedAt = performance.now();
+    const searchResult = await runtime.callTool('search_symbols', {
+        project_id: projectId,
+        query: 'scaleSymbol_999_9',
+        limit: 5
+    });
+    const searchMs = Math.round((performance.now() - searchStartedAt) * 10) / 10;
+
+    const target = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0")
+      .get(projectId, 'scaleSymbol_0_0') as { id: string };
+    const callerStartedAt = performance.now();
+    const callers = JSON.parse((await runtime.callTool('find_callers', {
+        symbol_id: target.id,
+        min_confidence: 0.8
+    })).content[0].text);
+    const callerMs = Math.round((performance.now() - callerStartedAt) * 10) / 10;
+
+    writeFile(targetFile, `${fs.readFileSync(targetFile, 'utf8')}\nexport function scaleSymbol_extra() { return scaleSymbol_0_0(); }\n`);
+    const incrementalStartedAt = performance.now();
+    const incremental = await runtime.reindexChangedFiles(projectPath, projectId);
+    const incrementalMs = Math.round((performance.now() - incrementalStartedAt) * 10) / 10;
+
+    for (let i = 1; i <= 25; i++) {
+        const file = path.join(projectPath, 'src', `module-${String(i).padStart(4, '0')}.ts`);
+        writeFile(file, `${fs.readFileSync(file, 'utf8')}\nexport function scaleSymbol_changed_${i}() { return ${i}; }\n`);
+    }
+    const riskStartedAt = performance.now();
+    const risk = JSON.parse((await runtime.callTool('changed_symbols_risk', {
+        project_id: projectId,
+        project_path: projectPath
+    })).content[0].text);
+    const riskMs = Math.round((performance.now() - riskStartedAt) * 10) / 10;
+
+    const dbInfo = runtime.db.prepare("PRAGMA database_list").all() as Array<{ file: string }>;
+    const dbPath = dbInfo.find(row => row.file)?.file;
+    const dbSizeMb = dbPath && fs.existsSync(dbPath)
+        ? Math.round((fs.statSync(dbPath).size / 1024 / 1024) * 10) / 10
+        : 0;
+    const symbolCount = (runtime.db.prepare("SELECT COUNT(*) as count FROM symbols WHERE project_id = ? AND is_deleted = 0")
+      .get(projectId) as { count: number }).count;
+    const searchPayload = JSON.parse(searchResult.content[0].text);
+    const callerNames = callers.definite_callers.map((caller: any) => caller.qualified_name);
+
+    return {
+        name: 'performance_scale_10k_symbols',
+        notes: `Cold index: ${coldIndexMs}ms for ${fileCount} files/${symbolCount} symbols; search: ${searchMs}ms; caller: ${callerMs}ms; incremental: ${incrementalMs}ms for ${incremental.changed_files} changed file; risk: ${riskMs}ms for ${risk.changed_files.length} changed files; db: ${dbSizeMb}MB.`,
+        passed: symbolCount >= 10000
+            && searchPayload[0]?.name === 'scaleSymbol_999_9'
+            && callerNames.includes('scaleSymbol_0_1')
+            && incremental.changed_files === 1
+            && risk.changed_files.length >= 25
+            && coldIndexMs < 120000
+            && searchMs < 1000
+            && callerMs < 1000
+            && incrementalMs < 10000
+            && riskMs < 10000
+            && dbSizeMb < 100
+    };
+}
+
 function writeReports(results: BenchmarkResult[]) {
     const outDir = path.join(process.cwd(), 'benchmark', 'results');
     fs.mkdirSync(outDir, { recursive: true });
@@ -771,7 +856,8 @@ async function main() {
         await benchmarkRefactorImpactAnalysis(),
         await benchmarkRegressionNarrowing(),
         await benchmarkPrRiskSummary(),
-        await benchmarkDiscoveryWorkloadComparison()
+        await benchmarkDiscoveryWorkloadComparison(),
+        await benchmarkPerformanceScale()
     ];
     writeReports(results);
     console.log(JSON.stringify(results, null, 2));

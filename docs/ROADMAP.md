@@ -25,10 +25,10 @@ This roadmap keeps the project focused. Each phase should improve either measure
 - [x] Persist call edges in SQLite.
 - [x] Use AST call edges in `find_callers`.
 - [x] Keep fuzzy body matching as lower-confidence fallback.
-- [ ] Add import/export resolver for direct static imports.
-- [ ] Add same-file shadowing and local scope checks.
-- [ ] Add barrel/re-export handling.
-- [ ] Benchmark AST caller precision against fuzzy caller precision.
+- [x] Add import/export resolver for direct static imports.
+- [x] Add same-file shadowing and local scope checks.
+- [x] Add barrel/re-export handling.
+- [x] Benchmark AST caller precision against fuzzy caller precision.
 
 ## Phase 3 - Git-Aware Incremental Indexing
 

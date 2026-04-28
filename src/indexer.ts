@@ -90,8 +90,8 @@ class IndexWorkerPool {
                     is_deleted=0
             `);
             const insertCall = db.prepare(`
-                INSERT OR REPLACE INTO symbol_calls (caller_symbol_id, target_symbol_id, target_name, project_id, file_path, line, confidence, resolution_method)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO symbol_calls (caller_symbol_id, target_symbol_id, target_name, target_file_path, project_id, file_path, line, confidence, resolution_method)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
 
             const transaction = db.transaction((symbolsToSave, callsToSave) => {
@@ -102,9 +102,12 @@ class IndexWorkerPool {
                 }
                 db.prepare("DELETE FROM symbol_calls WHERE project_id = ? AND file_path = ?").run(projectId, filePath);
                 for (const call of callsToSave) {
-                    const target = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0 LIMIT 1")
-                      .get(projectId, call.target_name) as { id: string } | undefined;
-                    insertCall.run(call.caller_symbol_id, target?.id || null, call.target_name, projectId, call.file_path, call.line, call.confidence, call.resolution_method);
+                    const target = call.target_file_path
+                        ? db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0 LIMIT 1")
+                          .get(projectId, call.target_name, call.target_file_path) as { id: string } | undefined
+                        : db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0 LIMIT 1")
+                          .get(projectId, call.target_name) as { id: string } | undefined;
+                    insertCall.run(call.caller_symbol_id, target?.id || null, call.target_name, call.target_file_path || null, projectId, call.file_path, call.line, call.confidence, call.resolution_method);
                 }
                 db.prepare("INSERT OR REPLACE INTO files (id, project_id, path, language, last_indexed_at, is_excluded) VALUES (?, ?, ?, ?, ?, ?)")
                   .run(fileId, projectId, filePath, langConfig.name, now, 0);

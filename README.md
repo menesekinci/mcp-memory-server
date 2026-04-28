@@ -24,8 +24,8 @@ We measured a simple discovery task in this repository: find the `callTool` symb
 Classic text search returned every matching import, test call, helper reference, and the actual function:
 
 ```text
-chars=4375
-approx_tokens=1094
+chars=4874
+approx_tokens=1219
 ```
 
 The MCP symbol search returned one compact symbol result:
@@ -39,7 +39,7 @@ chars=180
 approx_tokens=45
 ```
 
-That is roughly **95.9% fewer tokens** and a **24.3x smaller discovery output** before reading any source body. Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
+That is roughly **96.3% fewer tokens** and a **27.1x smaller discovery output** before reading any source body. Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
 
 ## Quick Start With Codex
 
@@ -153,6 +153,7 @@ Current benchmark coverage:
 
 - Classic broad text search versus compact MCP symbol discovery.
 - AST definite caller detection versus fuzzy probable caller fallback.
+- AST import/barrel resolver precision with same-name and local-shadowing false-positive checks.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the phased roadmap.
 

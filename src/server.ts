@@ -315,9 +315,15 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
       FROM symbol_calls sc
       JOIN symbols s ON sc.caller_symbol_id = s.id
       WHERE sc.project_id = ?
-      AND (sc.target_symbol_id = ? OR sc.target_name = ?)
+      AND (
+        sc.target_symbol_id = ?
+        OR (
+          sc.target_name = ?
+          AND (sc.target_file_path IS NULL OR sc.target_file_path = ?)
+        )
+      )
       AND s.is_deleted = 0
-    `).all(symbol.project_id, symbolId, symbol.name) as Array<{
+    `).all(symbol.project_id, symbolId, symbol.name, symbol.file_path) as Array<{
       id: string;
       qualified_name: string;
       file_path: string;

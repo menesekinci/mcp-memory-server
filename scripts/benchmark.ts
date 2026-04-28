@@ -157,6 +157,66 @@ export function mentionOnly() {
     }
 }
 
+async function benchmarkAstImportResolverPrecision(): Promise<BenchmarkResult> {
+    const projectPath = createTempDir('mcp-memory-benchmark-imports');
+    const projectId = 'benchmark-imports';
+    const cartFile = path.join(projectPath, 'src', 'cart.ts');
+    const mathFile = path.join(projectPath, 'src', 'math.ts');
+    const barrelFile = path.join(projectPath, 'src', 'index.ts');
+    const otherFile = path.join(projectPath, 'src', 'other.ts');
+
+    writeFile(mathFile, `
+export function calculateTotal() {
+  return 100;
+}
+`);
+    writeFile(barrelFile, 'export { calculateTotal } from "./math";\n');
+    writeFile(otherFile, 'export function calculateTotal() { return 200; }\n');
+    writeFile(cartFile, `
+import { calculateTotal } from "./index";
+import { calculateTotal as otherTotal } from "./other";
+
+export function checkout() {
+  return calculateTotal();
+}
+
+export function otherCheckout() {
+  return otherTotal();
+}
+
+export function shadowedCheckout() {
+  const calculateTotal = () => 1;
+  return calculateTotal();
+}
+`);
+
+    const runtime = await withRuntime(projectPath, projectId);
+    const watcher = runtime.startIndexer(projectPath, projectId);
+    try {
+        await waitFor(() => {
+            const row = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'calculateTotal', mathFile);
+            return Boolean(row);
+        });
+
+        const target = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'calculateTotal', mathFile) as { id: string };
+        const result = await runtime.callTool('find_callers', { symbol_id: target.id, min_confidence: 0.0 });
+        const payload = JSON.parse(result.content[0].text);
+        const definiteNames = payload.definite_callers.map((caller: any) => caller.qualified_name);
+        const expected = definiteNames.includes('checkout');
+        const falsePositives = definiteNames.filter((name: string) => name === 'otherCheckout' || name === 'shadowedCheckout');
+
+        return {
+            name: 'ast_import_resolver_precision',
+            notes: `Definite callers for barrel import: ${definiteNames.join(', ') || 'none'}; false positives: ${falsePositives.join(', ') || 'none'}.`,
+            passed: expected && falsePositives.length === 0
+        };
+    } finally {
+        await watcher.close();
+    }
+}
+
 function writeReports(results: BenchmarkResult[]) {
     const outDir = path.join(process.cwd(), 'benchmark', 'results');
     fs.mkdirSync(outDir, { recursive: true });
@@ -182,7 +242,8 @@ function writeReports(results: BenchmarkResult[]) {
 async function main() {
     const results = [
         await benchmarkSymbolDiscovery(),
-        await benchmarkAstCallers()
+        await benchmarkAstCallers(),
+        await benchmarkAstImportResolverPrecision()
     ];
     writeReports(results);
     console.log(JSON.stringify(results, null, 2));

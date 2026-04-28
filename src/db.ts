@@ -120,6 +120,7 @@ export function initDb() {
             caller_symbol_id TEXT NOT NULL REFERENCES symbols(id),
             target_symbol_id TEXT REFERENCES symbols(id),
             target_name TEXT NOT NULL,
+            target_file_path TEXT,
             project_id TEXT NOT NULL,
             file_path TEXT NOT NULL,
             line INTEGER NOT NULL,
@@ -138,6 +139,11 @@ export function initDb() {
         CREATE INDEX IF NOT EXISTS idx_calls_target ON symbol_calls(project_id, target_symbol_id, target_name);
         CREATE INDEX IF NOT EXISTS idx_calls_caller ON symbol_calls(caller_symbol_id);
     `);
+
+    const callColumns = db.prepare("PRAGMA table_info(symbol_calls)").all() as Array<{ name: string }>;
+    if (!callColumns.some(column => column.name === 'target_file_path')) {
+        db.prepare("ALTER TABLE symbol_calls ADD COLUMN target_file_path TEXT").run();
+    }
 }
 
 export default db;

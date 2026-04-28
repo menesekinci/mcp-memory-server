@@ -221,9 +221,15 @@ async function testAstCallGraph(db: TestDb, startIndexer: (projectPath: string, 
     const projectId = 'call-graph';
     const projectPath = createTempDir('mcp-memory-call-graph');
     const filePath = path.join(projectPath, 'src', 'cart.ts');
+    const mathFile = path.join(projectPath, 'src', 'math.ts');
+    const barrelFile = path.join(projectPath, 'src', 'index.ts');
+    const otherFile = path.join(projectPath, 'src', 'other.ts');
 
     writeFile(filePath, `
-export function calculateTotal() {
+import { calculateTotal } from "./index";
+import { calculateTotal as otherTotal } from "./other";
+
+export function sameFileTotal() {
   return 100;
 }
 
@@ -231,10 +237,30 @@ export function checkout() {
   return calculateTotal();
 }
 
+export function sameFileCheckout() {
+  return sameFileTotal();
+}
+
+export function otherCheckout() {
+  return otherTotal();
+}
+
+export function shadowedCheckout() {
+  const calculateTotal = () => 1;
+  return calculateTotal();
+}
+
 export function mentionOnly() {
-  return "calculateTotal";
+  return "sameFileTotal";
 }
 `);
+    writeFile(mathFile, `
+export function calculateTotal() {
+  return 100;
+}
+`);
+    writeFile(barrelFile, 'export { calculateTotal } from "./math";\n');
+    writeFile(otherFile, 'export function calculateTotal() { return 200; }\n');
 
     const watcher = startIndexer(projectPath, projectId);
     try {
@@ -244,13 +270,13 @@ export function mentionOnly() {
             return Boolean(row);
         });
 
-        const target = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0")
-          .get(projectId, 'calculateTotal') as { id: string } | undefined;
+        const target = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'sameFileTotal', filePath) as { id: string } | undefined;
         assert(target, 'target symbol should be indexed for call graph test');
 
         await waitFor(() => {
             const row = db.prepare("SELECT COUNT(*) as count FROM symbol_calls WHERE project_id = ? AND target_name = ?")
-              .get(projectId, 'calculateTotal') as { count: number };
+              .get(projectId, 'sameFileTotal') as { count: number };
             return row.count > 0;
         });
 
@@ -259,8 +285,29 @@ export function mentionOnly() {
             min_confidence: 0.0
         }));
 
-        assert(callers.definite_callers.some(c => c.qualified_name === 'checkout' && c.resolution_method === 'ast_same_file_or_name'), 'AST call graph should mark checkout as a definite caller');
+        assert(callers.definite_callers.some(c => c.qualified_name === 'sameFileCheckout' && c.resolution_method === 'ast_same_file_or_name'), 'AST call graph should mark same-file calls as definite callers');
         assert(callers.probable_callers.some(c => c.qualified_name === 'mentionOnly'), 'fuzzy fallback should keep mention-only matches as probable callers');
+
+        const importedTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'calculateTotal', mathFile) as { id: string } | undefined;
+        assert(importedTarget, 'imported target symbol should be indexed');
+
+        const importedCallers = parseToolJson<{ definite_callers: any[]; probable_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: importedTarget.id,
+            min_confidence: 0.0
+        }));
+        assert(importedCallers.definite_callers.some(c => c.qualified_name === 'checkout' && c.resolution_method === 'ast_static_import'), 'barrel import should resolve to the original exported file');
+        assert(!importedCallers.definite_callers.some(c => c.qualified_name === 'shadowedCheckout'), 'local shadowing should prevent imported AST caller edges');
+        assert(!importedCallers.definite_callers.some(c => c.qualified_name === 'otherCheckout'), 'same-name imports from other files should not point to the wrong target');
+
+        const otherTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'calculateTotal', otherFile) as { id: string } | undefined;
+        assert(otherTarget, 'duplicate target symbol should be indexed');
+        const otherCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: otherTarget.id,
+            min_confidence: 0.0
+        }));
+        assert(otherCallers.definite_callers.some(c => c.qualified_name === 'otherCheckout'), 'aliased direct import should resolve to its source file');
     } finally {
         await watcher.close();
     }

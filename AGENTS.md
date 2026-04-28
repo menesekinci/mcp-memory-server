@@ -1,18 +1,40 @@
 # Agent Guidance
 
+## Project Identity
+
+Codex MCP Memory Server is a symbol-aware MCP server for Codex and coding agents. Its purpose is to reduce token-heavy project discovery by indexing code symbols, call relationships, conversation history, and durable project decisions, then exposing compact MCP tools that help agents find the right source area before reading full code.
+
+The project is not meant to replace source inspection. It is meant to make the discovery phase cheaper and more accurate, then let the agent inspect exact source only after the relevant symbol, file, or line range is known.
+
+## Technology Stack
+
+- Runtime: Node.js with TypeScript.
+- Protocol: Model Context Protocol over stdio.
+- Indexing: tree-sitter for TypeScript, TSX, JavaScript, JSX, and Python.
+- Storage: SQLite through `better-sqlite3`.
+- Watch mode: `chokidar`.
+- Git intelligence: changed-file indexing, blob hashes, rename reconciliation, history parsing, and risk summaries.
+- Distribution: npm package `codex-mcp-memory-server` with `npx` support.
+- Plugin/adoption: repo-local Codex plugin metadata, MCP-first skill guidance, and setup helper.
+
+## Current Product Positioning
+
+- The package is at v0.2.0.
+- Phase 0-6 are complete: published core, benchmarks, TS/JS call graph, Git-aware incremental indexing, docs/adoption, language depth, and plugin polish.
+- The active direction is v0.3 real-world validation.
+- TS/JS caller precision is the strongest path. Python is supported but shallower and currently focuses on same-file AST call references.
+
 ## Memory MCP Usage
 
 When working in this repository, prefer the local MCP memory server for the first pass of project discovery.
 
 Recommended flow:
 
-1. Use MCP tools such as `search_symbols`, `lookup_symbol`, `index_status`, `search_history`, and `get_decisions` to narrow the relevant area first.
+1. Use MCP tools such as `index_status`, `search_symbols`, `lookup_symbol`, `search_history`, and `get_decisions` to narrow the relevant area first.
 2. Use compact MCP results for orientation. They intentionally omit full bodies and long absolute paths.
 3. Only call `get_symbol_body` or read files with shell commands after the relevant symbol, file, or line range is identified.
-4. Use normal shell search/read commands for non-symbol content such as docs, config, JSON, CSS, fixtures, package metadata, or broad text searches.
+4. Use normal shell search/read commands for docs, config, JSON, CSS, fixtures, package metadata, or broad non-symbol searches.
 5. Use `save_message` and `save_decision` for durable context when a decision or important symbol-level discussion should be available to future agents.
-
-The goal is not to replace normal code inspection. The goal is to reduce token use during discovery, then inspect the exact source when detail is needed.
 
 ## Task Flows
 
@@ -51,9 +73,76 @@ The goal is not to replace normal code inspection. The goal is to reduce token u
 5. Use `find_regression_candidates` when a date or timestamp is known.
 6. Inspect exact source only after MCP narrows the candidate symbols.
 
+## Active v0.3 Validation Backlog
+
+Keep this section as the live task list for hardening the project. When an item is completed, remove it from this backlog and add a short note under `Completed Validation Notes` explaining what changed and why.
+
+### Git Edge-Case Tests
+
+- [ ] Branch checkout where symbols are deleted and later restored.
+- [ ] Merge scenario where the same file changes on both branches.
+- [ ] Rebase or history rewrite reconciliation.
+- [ ] File move plus content change in the same operation.
+- [ ] Fallback behavior when Git rename detection does not report a rename.
+- [ ] Generated/build output remains excluded from indexing.
+- [ ] Large branch switch does not leave stale active symbols.
+
+### Task-Success Benchmarks
+
+- [ ] Bug fix task success: correct root symbol is selected, not just fewer tokens.
+- [ ] Refactor impact analysis: public function callers are found with low false positives.
+- [ ] Regression narrowing: changed symbols and prior decisions identify likely candidates.
+- [ ] PR risk summary: changed symbols and decision conflicts are surfaced compactly.
+- [ ] Compare MCP-assisted discovery against classic shell search by files read, bodies read, token size, and false positives.
+
+### Tool Contract Tests
+
+- [ ] Compact outputs never leak full symbol bodies.
+- [ ] Compact `ref` values resolve reliably through `get_symbol_body`.
+- [ ] Invalid `ref` and missing `symbol_id` cases return useful errors.
+- [ ] Every tool preserves `project_id` isolation.
+- [ ] Deleted symbols are hidden unless a tool explicitly opts into deleted results.
+- [ ] `include_tests=false` filters AST and fuzzy callers consistently.
+- [ ] `min_confidence` filtering works for definite and probable callers.
+
+### Database Compatibility
+
+- [ ] A v0.1.0-style SQLite database opens and migrates under the current runtime.
+- [ ] Schema creation remains idempotent across repeated launches.
+- [ ] Existing symbol, message, and decision records survive new migrations.
+- [ ] Future schema changes include explicit migration tests.
+
+### Performance And Scale
+
+- [ ] Cold index timing for a synthetic 1k-file project.
+- [ ] Search/caller latency for roughly 10k symbols.
+- [ ] Incremental reindex timing after a small file change in a larger project.
+- [ ] Database size growth for repeated indexing and history records.
+- [ ] `changed_symbols_risk` latency on a broad working-tree diff.
+
+### Cross-Platform And Release
+
+- [ ] CI matrix for Windows, Ubuntu, and macOS.
+- [ ] CI runs `npm ci`, `npm test`, `npm run benchmark`, `npm run build`, and `npm pack --dry-run`.
+- [ ] `npx -y codex-mcp-memory-server` smoke test.
+- [ ] `setup-codex-mcp-memory` smoke test.
+- [ ] Release checklist covers version bump, changelog/release notes, tag, GitHub release, npm publish, and post-publish install verification.
+
+### Dogfooding
+
+- [ ] Use this MCP on this repository for at least three real maintenance tasks.
+- [ ] Record which MCP tools were used, how many files/bodies were read, and what was missing.
+- [ ] Convert repeated dogfooding pain points into tool contract tests or benchmark scenarios.
+
+## Completed Validation Notes
+
+- v0.3 validation started by adding `bugfix_investigation_narrowing`, a task-shaped benchmark that combines compact symbol search, conversation history, and project decisions. This was added to move benchmark coverage beyond pure output-size checks.
+- Reconciliation now scans supported source files and compares blob hashes so clean branch checkout or rewrite states can update same-path symbol bodies even when `git diff HEAD` is empty.
+- Integration tests now cover same-path content changes after branch checkout, because stale symbol bodies after checkout would make the MCP unreliable during real agent work.
+
 ## Verification
 
-Before reporting changes as complete, run:
+Before reporting code changes as complete, run:
 
 ```powershell
 npm test
@@ -66,3 +155,4 @@ npm run benchmark
 ```
 
 Run `npm run build` after changes that affect the MCP server runtime, because Codex is configured to launch the compiled `dist/src/index.js`.
+

@@ -44,7 +44,7 @@ git diff --name-only --cached
 git ls-files --others --exclude-standard
 ```
 
-Rename reconciliation uses Git rename detection and preserves symbol links across moved files.
+Rename reconciliation uses Git rename detection and preserves symbol links across moved files. Full reconciliation also scans supported source files and compares blob hashes, so clean branch checkout or rewrite states can update same-path symbol bodies even when `git diff HEAD` is empty.
 
 ## Caller Graph
 

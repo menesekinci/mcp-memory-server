@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-04-28T11:55:47.648Z",
+  "generated_at": "2026-04-28T12:36:33.019Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
-      "classic_chars": 7175,
-      "classic_tokens": 1794,
+      "classic_chars": 7744,
+      "classic_tokens": 1936,
       "mcp_chars": 180,
       "mcp_tokens": 45,
-      "token_savings_pct": 97.5,
+      "token_savings_pct": 97.7,
       "notes": "Find the callTool symbol with broad text search versus compact MCP symbol search.",
       "passed": true
     },
@@ -29,6 +29,16 @@
     {
       "name": "language_depth_js_python_callers",
       "notes": "JavaScript callers: checkout; Python callers: checkout_py.",
+      "passed": true
+    },
+    {
+      "name": "bugfix_investigation_narrowing",
+      "classic_chars": 6290,
+      "classic_tokens": 1573,
+      "mcp_chars": 1306,
+      "mcp_tokens": 327,
+      "token_savings_pct": 79.2,
+      "notes": "Narrow a noisy discount regression from broad text matches to compact symbol, history, and decision context.",
       "passed": true
     }
   ]

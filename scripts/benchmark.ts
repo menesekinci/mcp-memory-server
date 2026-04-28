@@ -296,6 +296,106 @@ def checkout_py():
     }
 }
 
+async function benchmarkBugFixInvestigationNarrowing(): Promise<BenchmarkResult> {
+    const projectPath = createTempDir('mcp-memory-benchmark-bugfix');
+    const projectId = 'benchmark-bugfix';
+    const sessionId = 'benchmark-bugfix-session';
+
+    writeFile(path.join(projectPath, 'src', 'billing', 'discounts.ts'), `
+export function applyDiscount(total: number, coupon: string) {
+  if (coupon === "VIP") return Math.round(total * 0.85);
+  return total;
+}
+
+export function calculateInvoiceTotal(subtotal: number, coupon: string) {
+  return applyDiscount(subtotal, coupon);
+}
+`);
+    writeFile(path.join(projectPath, 'src', 'billing', 'checkout.ts'), `
+import { calculateInvoiceTotal } from "./discounts";
+
+export function checkout(subtotal: number, coupon: string) {
+  return calculateInvoiceTotal(subtotal, coupon);
+}
+`);
+    for (let i = 0; i < 12; i++) {
+        writeFile(path.join(projectPath, 'src', 'noise', `discount-note-${i}.ts`), `
+export function discountNote${i}() {
+  return [
+    "discount banner copy",
+    "discount analytics label",
+    "discount help text"
+  ].join(" ");
+}
+`);
+    }
+
+    const runtime = await withRuntime(projectPath, projectId);
+    const watcher = runtime.startIndexer(projectPath, projectId);
+    try {
+        await waitFor(() => {
+            const row = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0")
+              .get(projectId, 'applyDiscount');
+            return Boolean(row);
+        });
+
+        const now = Date.now();
+        runtime.db.prepare("INSERT INTO sessions (id, project_id, started_at, ended_at) VALUES (?, ?, ?, ?)")
+          .run(sessionId, projectId, now - 1000, now - 500);
+        await runtime.callTool('save_message', {
+            session_id: sessionId,
+            project_id: projectId,
+            role: 'user',
+            content: 'Regression report: VIP discount rounding changed near applyDiscount.',
+            explicit_symbols: ['applyDiscount']
+        });
+        await runtime.callTool('save_decision', {
+            project_id: projectId,
+            summary: 'applyDiscount owns coupon rounding behavior',
+            rationale: 'Checkout and invoice totals should depend on one billing boundary.',
+            source_session: sessionId,
+            related_symbols: ['applyDiscount']
+        });
+
+        const classic = classicSearch(projectPath, 'discount');
+        const symbolMatches = await runtime.callTool('search_symbols', {
+            project_id: projectId,
+            query: 'discount',
+            limit: 5
+        });
+        const historyMatches = await runtime.callTool('search_history', {
+            project_id: projectId,
+            query: 'discount',
+            limit: 3
+        });
+        const decisions = await runtime.callTool('get_decisions', {
+            project_id: projectId,
+            symbol: 'applyDiscount'
+        });
+        const mcpText = [
+            symbolMatches.content[0].text,
+            historyMatches.content[0].text,
+            decisions.content[0].text
+        ].join('\n');
+        const classicTokens = approxTokens(classic);
+        const mcpTokens = approxTokens(mcpText);
+        const includesTarget = mcpText.includes('applyDiscount') && mcpText.includes('coupon rounding');
+
+        return {
+            name: 'bugfix_investigation_narrowing',
+            classic_chars: classic.length,
+            classic_tokens: classicTokens,
+            mcp_chars: mcpText.length,
+            mcp_tokens: mcpTokens,
+            token_savings_pct: Math.round((1 - (mcpTokens / classicTokens)) * 1000) / 10,
+            notes: 'Narrow a noisy discount regression from broad text matches to compact symbol, history, and decision context.',
+            passed: includesTarget && mcpTokens < classicTokens
+        };
+    } finally {
+        await watcher.close();
+    }
+}
+
 function writeReports(results: BenchmarkResult[]) {
     const outDir = path.join(process.cwd(), 'benchmark', 'results');
     fs.mkdirSync(outDir, { recursive: true });
@@ -324,7 +424,8 @@ async function main() {
         await benchmarkAstCallers(),
         await benchmarkAstImportResolverPrecision(),
         await benchmarkIncrementalReindex(),
-        await benchmarkLanguageDepth()
+        await benchmarkLanguageDepth(),
+        await benchmarkBugFixInvestigationNarrowing()
     ];
     writeReports(results);
     console.log(JSON.stringify(results, null, 2));

@@ -18,7 +18,7 @@ async function bootstrap() {
     const projectId = process.env.PROJECT_ID || path.basename(projectPath) || 'default';
 
     indexGitHistory(projectPath, projectId);
-    reconcileProjectFiles(projectPath, projectId);
+    await reconcileProjectFiles(projectPath, projectId);
     await reindexChangedFiles(projectPath, projectId);
     if (process.env.INSTALL_GIT_HOOKS === '1') {
         installGitHooks(projectPath);

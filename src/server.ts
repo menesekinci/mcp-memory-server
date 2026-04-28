@@ -428,7 +428,7 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
   if (name === "reconcile_index") {
     const projectName = args.project_id || process.env.PROJECT_ID || 'default';
     const projectPath = args.project_path || process.env.PROJECT_PATH || process.cwd();
-    const result = reconcileProjectFiles(projectPath, projectName);
+    const result = await reconcileProjectFiles(projectPath, projectName);
     return {
       content: [{ type: "text", text: JSON.stringify(result) }],
     };

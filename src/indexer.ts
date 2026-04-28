@@ -218,7 +218,7 @@ export function listChangedSourceFiles(projectPath: string) {
         .filter(file => isSupportedSourceFile(file)))];
 }
 
-export function reconcileProjectFiles(projectPath: string, projectId = 'default') {
+export async function reconcileProjectFiles(projectPath: string, projectId = 'default') {
     const renames = reconcileRenamedFiles(projectPath, projectId);
     const rows = db.prepare("SELECT path FROM files WHERE project_id = ?").all(projectId) as Array<{ path: string }>;
     let deleted = 0;
@@ -228,7 +228,27 @@ export function reconcileProjectFiles(projectPath: string, projectId = 'default'
             deleted++;
         }
     }
-    return { reconciled_files: rows.length, deleted_files: deleted, renamed_files: renames.renamed_files };
+
+    let indexed = 0;
+    let skipped = 0;
+    let excluded = 0;
+    const sourceFiles = collectSupportedSourceFiles(projectPath);
+    for (const file of sourceFiles) {
+        const result = await indexFile(file, projectId);
+        if (result.indexed) indexed++;
+        else if (result.reason === 'excluded') excluded++;
+        else if (result.skipped) skipped++;
+    }
+
+    return {
+        reconciled_files: rows.length,
+        scanned_files: sourceFiles.length,
+        indexed,
+        skipped,
+        excluded,
+        deleted_files: deleted,
+        renamed_files: renames.renamed_files
+    };
 }
 
 export function reconcileRenamedFiles(projectPath: string, projectId = 'default') {
@@ -261,6 +281,22 @@ function containsSecrets(content: string) {
 
 function isSupportedSourceFile(filePath: string) {
     return Boolean(LANGUAGES[path.extname(filePath)]);
+}
+
+function collectSupportedSourceFiles(projectPath: string) {
+    const root = path.resolve(projectPath);
+    const files: string[] = [];
+    function walk(dir: string) {
+        if (!fs.existsSync(dir)) return;
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const fullPath = path.join(dir, entry.name);
+            if (/(^|[\/\\])(\.git|node_modules|dist)([\/\\]|$)/.test(fullPath)) continue;
+            if (entry.isDirectory()) walk(fullPath);
+            else if (isSupportedSourceFile(fullPath)) files.push(fullPath);
+        }
+    }
+    walk(root);
+    return files;
 }
 
 function gitBlobSha(content: string) {

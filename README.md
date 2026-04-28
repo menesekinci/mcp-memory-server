@@ -4,7 +4,7 @@
 
 Symbol-aware MCP memory server for Codex and coding agents.
 
-It indexes TypeScript, TSX, JavaScript, JSX, and Python projects with tree-sitter, stores symbol metadata in SQLite, and exposes compact MCP tools for low-token project discovery.
+It indexes TypeScript, TSX, JavaScript, JSX, and Python projects with tree-sitter, stores symbol metadata in SQLite, and exposes compact MCP tools for low-token project discovery. The current implementation is TS/JS-first for caller precision; Python support is useful but shallower and currently focuses on same-file AST call references.
 
 ## Why
 
@@ -22,15 +22,17 @@ Agents often spend a lot of tokens finding the right file or function before rea
 Current benchmark task: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=1794
+classic_tokens=1936
 mcp_tokens=45
-savings=97.5%
-smaller_output=39.9x
+savings=97.7%
+smaller_output=43.0x
 ```
 
 Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
 
 See [docs/benchmarks.md](docs/benchmarks.md) for benchmark scope and output files.
+
+The benchmark suite also includes real task-shaped checks such as noisy bug investigation narrowing, AST caller precision, incremental Git reindexing, and language-depth coverage.
 
 ## Quick Start
 
@@ -131,3 +133,4 @@ npm publish --access public
 - Compact outputs intentionally omit full code bodies to reduce token use during discovery.
 - Full source remains available through `get_symbol_body`.
 - `find_callers` returns AST definite callers and fuzzy probable callers.
+- v0.3 development is focused on real-repository validation: stronger edge-case tests, task-shaped benchmarks, and dogfooding before adding broad new feature surfaces.

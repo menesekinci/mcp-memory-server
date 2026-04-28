@@ -57,3 +57,12 @@ This roadmap keeps the project focused. Each phase should improve either measure
 - [x] Codex plugin/skill packaging for MCP-first behavior.
 - [x] Document optional VS Code UI direction for index status and symbol lookup.
 - [x] One-command setup helpers for common MCP clients.
+
+## Phase 7 - Real-World Validation
+
+- [x] Add a task-shaped bug investigation benchmark that combines symbol search, history, and decisions.
+- [x] Reconcile same-path content changes after clean branch checkout by scanning source files and comparing hashes.
+- [x] Add checkout reconciliation coverage to integration tests.
+- [ ] Add merge/rebase/rewrite integration fixtures with conflicting branch histories.
+- [ ] Add agent task-success benchmarks for bug fix, refactor impact, regression narrowing, and PR risk summary.
+- [ ] Dogfood the MCP on this repository and record missing tool affordances before widening the feature surface.

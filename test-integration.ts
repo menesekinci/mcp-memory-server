@@ -384,7 +384,7 @@ async function testGitAwareIncrementalIndexing(
     db: TestDb,
     indexFile: (filePath: string, projectId?: string, options?: { force?: boolean }) => Promise<any>,
     reindexChangedFiles: (projectPath: string, projectId?: string, options?: { force?: boolean }) => Promise<any>,
-    reconcileProjectFiles: (projectPath: string, projectId?: string) => any,
+    reconcileProjectFiles: (projectPath: string, projectId?: string) => Promise<any>,
     callTool: (name: string, args?: Record<string, any>) => Promise<any>
 ) {
     const projectId = 'incremental-git';
@@ -413,6 +413,19 @@ async function testGitAwareIncrementalIndexing(
       .get(projectId, filePath) as { git_blob_sha: string | null } | undefined;
     assert(Boolean(fileRow?.git_blob_sha), 'files.git_blob_sha should be populated');
 
+    const baseBranch = execFileSync('git', ['branch', '--show-current'], { cwd: projectPath, encoding: 'utf8' }).trim() || 'master';
+    execFileSync('git', ['checkout', '-b', 'checkout-edge'], { cwd: projectPath, stdio: 'ignore' });
+    writeFile(filePath, 'export function indexedOnce() { return 5; }\n');
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-m', 'change indexed once on branch'], { cwd: projectPath, stdio: 'ignore' });
+    const checkoutReconciled = await reconcileProjectFiles(projectPath, projectId);
+    assert(checkoutReconciled.indexed >= 1, 'reconcileProjectFiles should reindex same-path content changes after checkout');
+    const branchBody = db.prepare("SELECT body FROM symbols WHERE project_id = ? AND file_path = ? AND name = ? AND is_deleted = 0")
+      .get(projectId, filePath, 'indexedOnce') as { body: string } | undefined;
+    assert(branchBody?.body.includes('return 5'), 'checkout reconciliation should update symbol bodies when branch content changes');
+    execFileSync('git', ['checkout', baseBranch], { cwd: projectPath, stdio: 'ignore' });
+    await reconcileProjectFiles(projectPath, projectId);
+
     await indexFile(movablePath, projectId);
     await callTool('save_decision', {
         project_id: projectId,
@@ -439,7 +452,7 @@ async function testGitAwareIncrementalIndexing(
 
     await indexFile(deletedPath, projectId);
     fs.unlinkSync(deletedPath);
-    const reconciled = reconcileProjectFiles(projectPath, projectId);
+    const reconciled = await reconcileProjectFiles(projectPath, projectId);
     assert(reconciled.deleted_files === 1, 'reconcileProjectFiles should mark missing indexed files as deleted');
     const deletedSymbol = db.prepare("SELECT is_deleted FROM symbols WHERE project_id = ? AND file_path = ? AND name = ?")
       .get(projectId, deletedPath, 'deletedLater') as { is_deleted: number } | undefined;

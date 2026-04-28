@@ -24,8 +24,8 @@ We measured a simple discovery task in this repository: find the `callTool` symb
 Classic text search returned every matching import, test call, helper reference, and the actual function:
 
 ```text
-chars=4874
-approx_tokens=1219
+chars=5827
+approx_tokens=1457
 ```
 
 The MCP symbol search returned one compact symbol result:
@@ -39,7 +39,7 @@ chars=180
 approx_tokens=45
 ```
 
-That is roughly **96.3% fewer tokens** and a **27.1x smaller discovery output** before reading any source body. Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
+That is roughly **96.9% fewer tokens** and a **32.4x smaller discovery output** before reading any source body. Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
 
 ## Quick Start With Codex
 
@@ -108,7 +108,10 @@ Example compact symbol result:
 
 Available tools:
 
-- `index_status`: Count active, deleted, and excluded symbols.
+- `index_status`: Count active, deleted, indexed, hashed, and excluded project records.
+- `reindex_changed_files`: Re-index only Git changed, staged, and untracked source files.
+- `reconcile_index`: Mark missing indexed files as deleted after checkout, merge, or rewrite.
+- `changed_symbols_risk`: Summarize symbols in Git changed files and linked decisions.
 - `search_symbols`: Search compact symbol metadata by partial name, kind, or file.
 - `lookup_symbol`: Exact-name symbol lookup. Compact by default; supports `verbose` and `include_body`.
 - `get_symbol_body`: Read full body by `symbol_id` or compact `ref`.
@@ -154,6 +157,7 @@ Current benchmark coverage:
 - Classic broad text search versus compact MCP symbol discovery.
 - AST definite caller detection versus fuzzy probable caller fallback.
 - AST import/barrel resolver precision with same-name and local-shadowing false-positive checks.
+- Incremental changed-file reindexing with Git status and blob hashes.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the phased roadmap.
 

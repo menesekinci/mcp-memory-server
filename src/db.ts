@@ -144,6 +144,11 @@ export function initDb() {
     if (!callColumns.some(column => column.name === 'target_file_path')) {
         db.prepare("ALTER TABLE symbol_calls ADD COLUMN target_file_path TEXT").run();
     }
+
+    const fileColumns = db.prepare("PRAGMA table_info(files)").all() as Array<{ name: string }>;
+    if (!fileColumns.some(column => column.name === 'git_blob_sha')) {
+        db.prepare("ALTER TABLE files ADD COLUMN git_blob_sha TEXT").run();
+    }
 }
 
 export default db;

@@ -78,6 +78,8 @@ async function withRuntime(projectPath: string, projectId: string) {
     return {
         db,
         startIndexer: indexer.startIndexer,
+        indexFile: indexer.indexFile,
+        reindexChangedFiles: indexer.reindexChangedFiles,
         callTool: server.callTool
     };
 }
@@ -217,6 +219,33 @@ export function shadowedCheckout() {
     }
 }
 
+async function benchmarkIncrementalReindex(): Promise<BenchmarkResult> {
+    const projectPath = createTempDir('mcp-memory-benchmark-incremental');
+    const projectId = 'benchmark-incremental';
+    writeFile(path.join(projectPath, 'src', 'stable.ts'), 'export function stableSymbol() { return 1; }\n');
+    writeFile(path.join(projectPath, 'src', 'changed.ts'), 'export function changedSymbol() { return 1; }\n');
+
+    const { execFileSync } = await import('child_process');
+    execFileSync('git', ['init'], { cwd: projectPath, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: projectPath });
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-m', 'initial benchmark files'], { cwd: projectPath, stdio: 'ignore' });
+
+    const runtime = await withRuntime(projectPath, projectId);
+    await runtime.indexFile(path.join(projectPath, 'src', 'stable.ts'), projectId);
+    await runtime.indexFile(path.join(projectPath, 'src', 'changed.ts'), projectId);
+
+    writeFile(path.join(projectPath, 'src', 'changed.ts'), 'export function changedSymbol() { return 2; }\n');
+    const result = await runtime.reindexChangedFiles(projectPath, projectId);
+
+    return {
+        name: 'incremental_changed_file_reindex',
+        notes: `Changed files: ${result.changed_files}; indexed: ${result.indexed}; skipped: ${result.skipped}; deleted: ${result.deleted}.`,
+        passed: result.changed_files === 1 && result.indexed === 1
+    };
+}
+
 function writeReports(results: BenchmarkResult[]) {
     const outDir = path.join(process.cwd(), 'benchmark', 'results');
     fs.mkdirSync(outDir, { recursive: true });
@@ -243,7 +272,8 @@ async function main() {
     const results = [
         await benchmarkSymbolDiscovery(),
         await benchmarkAstCallers(),
-        await benchmarkAstImportResolverPrecision()
+        await benchmarkAstImportResolverPrecision(),
+        await benchmarkIncrementalReindex()
     ];
     writeReports(results);
     console.log(JSON.stringify(results, null, 2));

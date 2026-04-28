@@ -49,6 +49,9 @@ async function withIsolatedRuntime() {
     return {
         db,
         startIndexer: indexer.startIndexer,
+        indexFile: indexer.indexFile,
+        reindexChangedFiles: indexer.reindexChangedFiles,
+        reconcileProjectFiles: indexer.reconcileProjectFiles,
         callTool: server.callTool,
         indexGitHistory: gitParser.indexGitHistory
     };
@@ -313,6 +316,73 @@ export function calculateTotal() {
     }
 }
 
+async function testGitAwareIncrementalIndexing(
+    db: TestDb,
+    indexFile: (filePath: string, projectId?: string, options?: { force?: boolean }) => Promise<any>,
+    reindexChangedFiles: (projectPath: string, projectId?: string, options?: { force?: boolean }) => Promise<any>,
+    reconcileProjectFiles: (projectPath: string, projectId?: string) => any,
+    callTool: (name: string, args?: Record<string, any>) => Promise<any>
+) {
+    const projectId = 'incremental-git';
+    const projectPath = createTempDir('mcp-memory-incremental');
+    const filePath = path.join(projectPath, 'src', 'incremental.ts');
+    const deletedPath = path.join(projectPath, 'src', 'deleted.ts');
+
+    execFileSync('git', ['init'], { cwd: projectPath, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: projectPath });
+
+    writeFile(filePath, 'export function indexedOnce() { return 1; }\n');
+    writeFile(deletedPath, 'export function deletedLater() { return 1; }\n');
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-m', 'initial incremental files'], { cwd: projectPath, stdio: 'ignore' });
+
+    const first = await indexFile(filePath, projectId);
+    assert(first.indexed === true, 'indexFile should index new files');
+    const second = await indexFile(filePath, projectId);
+    assert(second.skipped === true && second.reason === 'unchanged', 'indexFile should skip unchanged files by blob hash');
+
+    const fileRow = db.prepare("SELECT git_blob_sha FROM files WHERE project_id = ? AND path = ?")
+      .get(projectId, filePath) as { git_blob_sha: string | null } | undefined;
+    assert(Boolean(fileRow?.git_blob_sha), 'files.git_blob_sha should be populated');
+
+    writeFile(filePath, 'export function indexedOnce() { return 2; }\n');
+    const changed = await reindexChangedFiles(projectPath, projectId);
+    assert(changed.changed_files === 1 && changed.indexed === 1, 'reindexChangedFiles should index only git changed source files');
+
+    await indexFile(deletedPath, projectId);
+    fs.unlinkSync(deletedPath);
+    const reconciled = reconcileProjectFiles(projectPath, projectId);
+    assert(reconciled.deleted_files === 1, 'reconcileProjectFiles should mark missing indexed files as deleted');
+    const deletedSymbol = db.prepare("SELECT is_deleted FROM symbols WHERE project_id = ? AND file_path = ? AND name = ?")
+      .get(projectId, deletedPath, 'deletedLater') as { is_deleted: number } | undefined;
+    assert(deletedSymbol?.is_deleted === 1, 'reconcileProjectFiles should mark symbols from missing files as deleted');
+
+    writeFile(path.join(projectPath, 'src', 'via-tool.ts'), 'export function viaTool() { return 1; }\n');
+    const toolResult = parseToolJson<{ changed_files: number; indexed: number }>(await callTool('reindex_changed_files', {
+        project_id: projectId,
+        project_path: projectPath
+    }));
+    assert(toolResult.changed_files >= 1 && toolResult.indexed >= 1, 'reindex_changed_files tool should index git changed files');
+
+    await callTool('save_decision', {
+        project_id: projectId,
+        summary: 'Review viaTool when changed',
+        related_symbols: ['viaTool']
+    });
+    const risk = parseToolJson<{ changed_symbols: any[]; related_decisions: any[] }>(await callTool('changed_symbols_risk', {
+        project_id: projectId,
+        project_path: projectPath
+    }));
+    assert(risk.changed_symbols.some(symbol => symbol.name === 'viaTool'), 'changed_symbols_risk should include symbols from changed files');
+    assert(risk.related_decisions.some(decision => decision.summary === 'Review viaTool when changed'), 'changed_symbols_risk should include decisions linked to changed symbols');
+
+    const status = parseToolJson<{ hashed_files: number; indexed_files: number }>(await callTool('index_status', {
+        project_id: projectId
+    }));
+    assert(status.hashed_files > 0 && status.indexed_files > 0, 'index_status should expose file/hash counts');
+}
+
 async function testGitHistory(db: TestDb, indexGitHistory: (projectPath: string, projectId?: string) => void) {
     const projectId = 'git-history';
     const projectPath = createTempDir('mcp-memory-git');
@@ -352,6 +422,9 @@ async function main() {
 
     await testAstCallGraph(runtime.db, runtime.startIndexer, runtime.callTool);
     console.log('AST call graph tests passed.');
+
+    await testGitAwareIncrementalIndexing(runtime.db, runtime.indexFile, runtime.reindexChangedFiles, runtime.reconcileProjectFiles, runtime.callTool);
+    console.log('Git-aware incremental indexing tests passed.');
 
     await testGitHistory(runtime.db, runtime.indexGitHistory);
     console.log('Git history tests passed.');

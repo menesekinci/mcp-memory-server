@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-04-28T11:05:19.368Z",
+  "generated_at": "2026-04-28T11:25:08.152Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
-      "classic_chars": 4874,
-      "classic_tokens": 1219,
+      "classic_chars": 5827,
+      "classic_tokens": 1457,
       "mcp_chars": 180,
       "mcp_tokens": 45,
-      "token_savings_pct": 96.3,
+      "token_savings_pct": 96.9,
       "notes": "Find the callTool symbol with broad text search versus compact MCP symbol search.",
       "passed": true
     },
@@ -19,6 +19,11 @@
     {
       "name": "ast_import_resolver_precision",
       "notes": "Definite callers for barrel import: checkout; false positives: none.",
+      "passed": true
+    },
+    {
+      "name": "incremental_changed_file_reindex",
+      "notes": "Changed files: 1; indexed: 1; skipped: 0; deleted: 0.",
       "passed": true
     }
   ]

@@ -4,8 +4,9 @@ import Python from 'tree-sitter-python';
 import chokidar from 'chokidar';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
+import { execFileSync } from 'child_process';
 import db from './db';
-import { v4 as uuidv4 } from 'uuid';
 import { extractCallReferences } from './call-graph';
 
 const LANGUAGES = {
@@ -35,88 +36,13 @@ class IndexWorkerPool {
             const filePath = this.queue.shift();
             if (filePath) {
                 this.activeWorkers++;
-                this.processFile(filePath, projectId).finally(() => {
+                indexFile(filePath, projectId).finally(() => {
                     this.activeWorkers--;
                     this.processQueue(projectId);
                 });
             }
         }
         this.isProcessing = false;
-    }
-
-    private async processFile(filePath: string, projectId: string) {
-        const ext = path.extname(filePath);
-        const langConfig = LANGUAGES[ext];
-        if (!langConfig) return;
-
-        try {
-            const fileId = fileRecordId(projectId, filePath);
-
-            if (isSecretFile(filePath)) {
-                db.prepare("INSERT OR REPLACE INTO files (id, project_id, path, language, last_indexed_at, is_excluded) VALUES (?, ?, ?, ?, ?, ?)")
-                  .run(fileId, projectId, filePath, langConfig.name, Date.now(), 1);
-                return;
-            }
-
-            const content = fs.readFileSync(filePath, 'utf8');
-            if (containsSecrets(content)) {
-                db.prepare("INSERT OR REPLACE INTO files (id, project_id, path, language, last_indexed_at, is_excluded) VALUES (?, ?, ?, ?, ?, ?)")
-                  .run(fileId, projectId, filePath, langConfig.name, Date.now(), 1);
-                return;
-            }
-
-            const parser = new Parser();
-            parser.setLanguage(langConfig.language);
-            const tree = parser.parse(content);
-            const symbols = extractSymbols(tree, content, filePath, langConfig.name, projectId);
-            const callReferences = langConfig.name === 'typescript'
-                ? extractCallReferences(tree, symbols, filePath)
-                : [];
-            const now = Date.now();
-
-            const upsertSymbol = db.prepare(`
-                INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-                ON CONFLICT(id) DO UPDATE SET
-                    name=excluded.name,
-                    qualified_name=excluded.qualified_name,
-                    kind=excluded.kind,
-                    file_path=excluded.file_path,
-                    start_line=excluded.start_line,
-                    end_line=excluded.end_line,
-                    signature=excluded.signature,
-                    body=excluded.body,
-                    updated_at=excluded.updated_at,
-                    is_deleted=0
-            `);
-            const insertCall = db.prepare(`
-                INSERT OR REPLACE INTO symbol_calls (caller_symbol_id, target_symbol_id, target_name, target_file_path, project_id, file_path, line, confidence, resolution_method)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `);
-
-            const transaction = db.transaction((symbolsToSave, callsToSave) => {
-                db.prepare("UPDATE symbols SET is_deleted = 1, updated_at = ? WHERE project_id = ? AND file_path = ?")
-                  .run(now, projectId, filePath);
-                for (const s of symbolsToSave) {
-                    upsertSymbol.run(s.id, s.project_id, s.name, s.qualified_name, s.kind, s.file_path, s.start_line, s.end_line, s.signature, s.body, s.language, s.updated_at);
-                }
-                db.prepare("DELETE FROM symbol_calls WHERE project_id = ? AND file_path = ?").run(projectId, filePath);
-                for (const call of callsToSave) {
-                    const target = call.target_file_path
-                        ? db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0 LIMIT 1")
-                          .get(projectId, call.target_name, call.target_file_path) as { id: string } | undefined
-                        : db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0 LIMIT 1")
-                          .get(projectId, call.target_name) as { id: string } | undefined;
-                    insertCall.run(call.caller_symbol_id, target?.id || null, call.target_name, call.target_file_path || null, projectId, call.file_path, call.line, call.confidence, call.resolution_method);
-                }
-                db.prepare("INSERT OR REPLACE INTO files (id, project_id, path, language, last_indexed_at, is_excluded) VALUES (?, ?, ?, ?, ?, ?)")
-                  .run(fileId, projectId, filePath, langConfig.name, now, 0);
-            });
-
-            transaction(symbols, callReferences);
-        } catch (e) {
-            console.error(`Error indexing file ${filePath}:`, e);
-        }
     }
 }
 
@@ -165,8 +91,139 @@ function markFileDeleted(filePath: string, projectId: string) {
     const now = Date.now();
     db.prepare("UPDATE symbols SET is_deleted = 1, updated_at = ? WHERE project_id = ? AND file_path = ?")
       .run(now, projectId, filePath);
-    db.prepare("UPDATE files SET last_indexed_at = ? WHERE project_id = ? AND path = ?")
+    db.prepare("DELETE FROM symbol_calls WHERE project_id = ? AND file_path = ?").run(projectId, filePath);
+    db.prepare("UPDATE files SET last_indexed_at = ?, git_blob_sha = NULL WHERE project_id = ? AND path = ?")
       .run(now, projectId, filePath);
+}
+
+export async function indexFile(filePath: string, projectId = 'default', options: { force?: boolean } = {}) {
+    const ext = path.extname(filePath);
+    const langConfig = LANGUAGES[ext];
+    if (!langConfig) return { indexed: false, skipped: true, reason: 'unsupported' };
+    if (!fs.existsSync(filePath)) {
+        markFileDeleted(filePath, projectId);
+        return { indexed: false, skipped: false, reason: 'deleted' };
+    }
+
+    try {
+        const fileId = fileRecordId(projectId, filePath);
+        const content = fs.readFileSync(filePath, 'utf8');
+        const blobSha = gitBlobSha(content);
+        const existing = db.prepare("SELECT git_blob_sha, is_excluded FROM files WHERE id = ?")
+          .get(fileId) as { git_blob_sha: string | null; is_excluded: number } | undefined;
+
+        if (!options.force && existing?.git_blob_sha === blobSha) {
+            return { indexed: false, skipped: true, reason: 'unchanged' };
+        }
+
+        const now = Date.now();
+        if (isSecretFile(filePath) || containsSecrets(content)) {
+            db.prepare(`
+                INSERT INTO files (id, project_id, path, language, last_indexed_at, git_blob_sha, is_excluded)
+                VALUES (?, ?, ?, ?, ?, ?, 1)
+                ON CONFLICT(id) DO UPDATE SET
+                    language=excluded.language,
+                    last_indexed_at=excluded.last_indexed_at,
+                    git_blob_sha=excluded.git_blob_sha,
+                    is_excluded=1
+            `).run(fileId, projectId, filePath, langConfig.name, now, blobSha);
+            return { indexed: false, skipped: false, reason: 'excluded' };
+        }
+
+        const parser = new Parser();
+        parser.setLanguage(langConfig.language);
+        const tree = parser.parse(content);
+        const symbols = extractSymbols(tree, content, filePath, langConfig.name, projectId);
+        const callReferences = langConfig.name === 'typescript'
+            ? extractCallReferences(tree, symbols, filePath)
+            : [];
+
+        const upsertSymbol = db.prepare(`
+            INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                qualified_name=excluded.qualified_name,
+                kind=excluded.kind,
+                file_path=excluded.file_path,
+                start_line=excluded.start_line,
+                end_line=excluded.end_line,
+                signature=excluded.signature,
+                body=excluded.body,
+                updated_at=excluded.updated_at,
+                is_deleted=0
+        `);
+        const insertCall = db.prepare(`
+            INSERT OR REPLACE INTO symbol_calls (caller_symbol_id, target_symbol_id, target_name, target_file_path, project_id, file_path, line, confidence, resolution_method)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        const transaction = db.transaction((symbolsToSave, callsToSave) => {
+            db.prepare("UPDATE symbols SET is_deleted = 1, updated_at = ? WHERE project_id = ? AND file_path = ?")
+              .run(now, projectId, filePath);
+            for (const s of symbolsToSave) {
+                upsertSymbol.run(s.id, s.project_id, s.name, s.qualified_name, s.kind, s.file_path, s.start_line, s.end_line, s.signature, s.body, s.language, s.updated_at);
+            }
+            db.prepare("DELETE FROM symbol_calls WHERE project_id = ? AND file_path = ?").run(projectId, filePath);
+            for (const call of callsToSave) {
+                const target = call.target_file_path
+                    ? db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0 LIMIT 1")
+                      .get(projectId, call.target_name, call.target_file_path) as { id: string } | undefined
+                    : db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0 LIMIT 1")
+                      .get(projectId, call.target_name) as { id: string } | undefined;
+                insertCall.run(call.caller_symbol_id, target?.id || null, call.target_name, call.target_file_path || null, projectId, call.file_path, call.line, call.confidence, call.resolution_method);
+            }
+            db.prepare(`
+                INSERT INTO files (id, project_id, path, language, last_indexed_at, git_blob_sha, is_excluded)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+                ON CONFLICT(id) DO UPDATE SET
+                    language=excluded.language,
+                    last_indexed_at=excluded.last_indexed_at,
+                    git_blob_sha=excluded.git_blob_sha,
+                    is_excluded=0
+            `).run(fileId, projectId, filePath, langConfig.name, now, blobSha);
+        });
+
+        transaction(symbols, callReferences);
+        return { indexed: true, skipped: false, reason: 'changed' };
+    } catch (e) {
+        console.error(`Error indexing file ${filePath}:`, e);
+        return { indexed: false, skipped: false, reason: 'error' };
+    }
+}
+
+export async function reindexChangedFiles(projectPath: string, projectId = 'default', options: { force?: boolean } = {}) {
+    const uniqueFiles = listChangedSourceFiles(projectPath);
+    let indexed = 0;
+    let skipped = 0;
+    let deleted = 0;
+
+    for (const file of uniqueFiles) {
+        const result = await indexFile(file, projectId, options);
+        if (result.reason === 'deleted') deleted++;
+        else if (result.indexed) indexed++;
+        else if (result.skipped) skipped++;
+    }
+
+    return { changed_files: uniqueFiles.length, indexed, skipped, deleted };
+}
+
+export function listChangedSourceFiles(projectPath: string) {
+    return [...new Set(gitChangedFiles(projectPath)
+        .map(file => path.resolve(projectPath, file))
+        .filter(file => isSupportedSourceFile(file)))];
+}
+
+export function reconcileProjectFiles(projectPath: string, projectId = 'default') {
+    const rows = db.prepare("SELECT path FROM files WHERE project_id = ?").all(projectId) as Array<{ path: string }>;
+    let deleted = 0;
+    for (const row of rows) {
+        if (path.resolve(row.path).startsWith(path.resolve(projectPath)) && !fs.existsSync(row.path)) {
+            markFileDeleted(row.path, projectId);
+            deleted++;
+        }
+    }
+    return { reconciled_files: rows.length, deleted_files: deleted };
 }
 
 function fileRecordId(projectId: string, filePath: string) {
@@ -181,6 +238,39 @@ function isSecretFile(filePath: string) {
 function containsSecrets(content: string) {
     const secretRegex = /(api[_-]?key|token|password|secret)\s*=\s*['"][^'"]{8,}['"]/i;
     return secretRegex.test(content);
+}
+
+function isSupportedSourceFile(filePath: string) {
+    return Boolean(LANGUAGES[path.extname(filePath)]);
+}
+
+function gitBlobSha(content: string) {
+    const buffer = Buffer.from(content, 'utf8');
+    return crypto
+        .createHash('sha1')
+        .update(`blob ${buffer.length}\0`)
+        .update(buffer)
+        .digest('hex');
+}
+
+function gitChangedFiles(projectPath: string) {
+    const files = new Set<string>();
+    const commands: string[][] = [
+        ['diff', '--name-only', 'HEAD'],
+        ['diff', '--name-only', '--cached'],
+        ['ls-files', '--others', '--exclude-standard']
+    ];
+
+    for (const args of commands) {
+        try {
+            const output = execFileSync('git', ['-C', projectPath, ...args], { encoding: 'utf8' });
+            output.split(/\r?\n/).filter(Boolean).forEach(file => files.add(file));
+        } catch {
+            // Non-git projects still work through chokidar; this helper simply has no changed files.
+        }
+    }
+
+    return [...files];
 }
 
 function extractSymbols(tree: Parser.Tree, content: string, filePath: string, language: string, projectId = 'default') {

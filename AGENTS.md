@@ -28,10 +28,12 @@ The goal is not to replace normal code inspection. The goal is to reduce token u
 ### Code Review Flow
 
 1. Use normal git commands to inspect changed files.
-2. Use `changed_since` or `search_symbols` to map changed files to symbols.
-3. Use `find_callers` for changed public functions or methods.
-4. Use `get_decisions` to check whether changes conflict with prior decisions.
-5. Read exact source only for changed symbols and their likely callers.
+2. Use `reindex_changed_files` when the working tree changed and the MCP index may be stale.
+3. Use `changed_symbols_risk` to map Git changes to symbols and linked decisions.
+4. Use `changed_since` or `search_symbols` to map changed files to symbols.
+5. Use `find_callers` for changed public functions or methods.
+6. Use `get_decisions` to check whether changes conflict with prior decisions.
+7. Read exact source only for changed symbols and their likely callers.
 
 ### Refactor Flow
 
@@ -42,10 +44,12 @@ The goal is not to replace normal code inspection. The goal is to reduce token u
 
 ### Regression Investigation Flow
 
-1. Use `context_since_last_session` to find recent symbol changes.
-2. Use `symbols_discussed_and_changed` to connect prior discussion to later edits.
-3. Use `find_regression_candidates` when a date or timestamp is known.
-4. Inspect exact source only after MCP narrows the candidate symbols.
+1. Use `reconcile_index` after branch checkout, merge, rebase, or rewrite.
+2. Use `changed_symbols_risk` to surface changed symbols with linked decisions.
+3. Use `context_since_last_session` to find recent symbol changes.
+4. Use `symbols_discussed_and_changed` to connect prior discussion to later edits.
+5. Use `find_regression_candidates` when a date or timestamp is known.
+6. Inspect exact source only after MCP narrows the candidate symbols.
 
 ## Verification
 

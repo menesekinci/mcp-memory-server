@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import { resolveSymbolReferences } from "./symbol-resolver";
 import { CountRow, DecisionRow, MessageRow, SessionRow, SymbolReference, SymbolRow } from "./types";
+import { listChangedSourceFiles, reindexChangedFiles, reconcileProjectFiles } from "./indexer";
 
 const server = new Server(
   {
@@ -113,6 +114,41 @@ export async function listTools() {
             project_id: { type: "string", default: "default" }
           },
           required: ["project_id"],
+        },
+      },
+      {
+        name: "reindex_changed_files",
+        description: "Re-index only Git changed, staged, and untracked source files for a project",
+        inputSchema: {
+          type: "object",
+          properties: {
+            project_id: { type: "string", default: "default" },
+            project_path: { type: "string" },
+            force: { type: "boolean", default: false }
+          },
+        },
+      },
+      {
+        name: "reconcile_index",
+        description: "Reconcile indexed files against the working tree after checkout, merge, or rewrite",
+        inputSchema: {
+          type: "object",
+          properties: {
+            project_id: { type: "string", default: "default" },
+            project_path: { type: "string" }
+          },
+        },
+      },
+      {
+        name: "changed_symbols_risk",
+        description: "Summarize symbols in Git changed files and decisions linked to those symbols",
+        inputSchema: {
+          type: "object",
+          properties: {
+            project_id: { type: "string", default: "default" },
+            project_path: { type: "string" },
+            include_deleted: { type: "boolean", default: false }
+          },
         },
       },
       {
@@ -373,8 +409,59 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
     const total = (db.prepare("SELECT COUNT(*) as count FROM symbols WHERE project_id = ? AND is_deleted = 0").get(projectName) as CountRow | undefined)?.count || 0;
     const deleted = (db.prepare("SELECT COUNT(*) as count FROM symbols WHERE project_id = ? AND is_deleted = 1").get(projectName) as CountRow | undefined)?.count || 0;
     const excluded = (db.prepare("SELECT count(*) as count FROM files WHERE project_id = ? AND is_excluded = 1").get(projectName) as CountRow | undefined)?.count || 0;
+    const files = (db.prepare("SELECT count(*) as count FROM files WHERE project_id = ?").get(projectName) as CountRow | undefined)?.count || 0;
+    const hashed = (db.prepare("SELECT count(*) as count FROM files WHERE project_id = ? AND git_blob_sha IS NOT NULL").get(projectName) as CountRow | undefined)?.count || 0;
     return {
-      content: [{ type: "text", text: JSON.stringify({ status: 'ready', total_symbols: total, deleted_symbols: deleted, excluded_files: excluded }) }],
+      content: [{ type: "text", text: JSON.stringify({ status: 'ready', total_symbols: total, deleted_symbols: deleted, indexed_files: files, hashed_files: hashed, excluded_files: excluded }) }],
+    };
+  }
+
+  if (name === "reindex_changed_files") {
+    const projectName = args.project_id || process.env.PROJECT_ID || 'default';
+    const projectPath = args.project_path || process.env.PROJECT_PATH || process.cwd();
+    const result = await reindexChangedFiles(projectPath, projectName, { force: Boolean(args.force) });
+    return {
+      content: [{ type: "text", text: JSON.stringify(result) }],
+    };
+  }
+
+  if (name === "reconcile_index") {
+    const projectName = args.project_id || process.env.PROJECT_ID || 'default';
+    const projectPath = args.project_path || process.env.PROJECT_PATH || process.cwd();
+    const result = reconcileProjectFiles(projectPath, projectName);
+    return {
+      content: [{ type: "text", text: JSON.stringify(result) }],
+    };
+  }
+
+  if (name === "changed_symbols_risk") {
+    const projectName = args.project_id || process.env.PROJECT_ID || 'default';
+    const projectPath = args.project_path || process.env.PROJECT_PATH || process.cwd();
+    const changedFiles = listChangedSourceFiles(projectPath);
+    const includeDeleted = Boolean(args.include_deleted);
+    const changedSymbols = changedFiles.flatMap(filePath => {
+      const sql = includeDeleted
+        ? "SELECT * FROM symbols WHERE project_id = ? AND file_path = ? ORDER BY name"
+        : "SELECT * FROM symbols WHERE project_id = ? AND file_path = ? AND is_deleted = 0 ORDER BY name";
+      return (db.prepare(sql).all(projectName, filePath) as SymbolRow[])
+        .map(symbol => formatSymbol(symbol, { includeBody: false, verbose: false }));
+    });
+    const changedSymbolIds = changedSymbols.map((symbol: any) => resolveSymbolIdFromRef(symbol.ref, projectName)).filter(Boolean);
+    const decisions = changedSymbolIds.length === 0 ? [] : db.prepare(`
+      SELECT DISTINCT d.id, d.summary, d.status, d.confidence, d.decided_at
+      FROM project_decisions d
+      JOIN decision_symbol_references dsr ON d.id = dsr.decision_id
+      WHERE d.project_id = ?
+      AND dsr.symbol_id IN (${changedSymbolIds.map(() => '?').join(',')})
+      ORDER BY d.decided_at DESC
+    `).all(projectName, ...changedSymbolIds);
+
+    return {
+      content: [{ type: "text", text: JSON.stringify({
+        changed_files: changedFiles,
+        changed_symbols: changedSymbols,
+        related_decisions: decisions
+      }) }],
     };
   }
 

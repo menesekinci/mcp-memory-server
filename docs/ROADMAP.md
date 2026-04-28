@@ -32,11 +32,11 @@ This roadmap keeps the project focused. Each phase should improve either measure
 
 ## Phase 3 - Git-Aware Incremental Indexing
 
-- [ ] Re-index only changed files when possible.
-- [ ] Track file blob hashes in `files.git_blob_sha`.
-- [ ] Reconcile symbols after checkout/merge/rewrite.
+- [x] Re-index only changed files when possible.
+- [x] Track file blob hashes in `files.git_blob_sha`.
+- [x] Reconcile symbols after checkout/merge/rewrite.
 - [ ] Improve rename/move handling.
-- [ ] Produce PR/session risk summaries from changed symbols and decisions.
+- [x] Produce PR/session risk summaries from changed symbols and decisions.
 
 ## Phase 4 - Docs And Adoption
 

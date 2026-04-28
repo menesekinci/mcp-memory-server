@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Benchmark
+        run: npm run benchmark
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack dry run
+        run: npm pack --dry-run
+
+  release-smoke:
+    name: Release Smoke
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Package tarball
+        id: pack
+        shell: bash
+        run: |
+          npm pack --json > pack.json
+          echo "file=$(node -e 'const pack=require("./pack.json"); console.log(pack[0].filename)')" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke setup helper from packed package
+        run: npx -y -p "./${{ steps.pack.outputs.file }}" setup-codex-mcp-memory --project-path "$PWD" --project-id ci-smoke --dry-run
+
+      - name: Verify package entrypoint exists
+        run: node -e "require('fs').accessSync('dist/src/index.js')"

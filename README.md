@@ -22,17 +22,17 @@ Agents often spend a lot of tokens finding the right file or function before rea
 Current benchmark task: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=1936
+classic_tokens=3565
 mcp_tokens=45
-savings=97.7%
-smaller_output=43.0x
+savings=98.7%
+smaller_output=79.2x
 ```
 
 Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
 
 See [docs/benchmarks.md](docs/benchmarks.md) for benchmark scope and output files.
 
-The benchmark suite also includes real task-shaped checks such as noisy bug investigation narrowing, AST caller precision, incremental Git reindexing, and language-depth coverage.
+The benchmark suite also includes real task-shaped checks such as bug-fix root symbol selection, refactor impact analysis, regression narrowing, PR risk summaries, noisy bug investigation narrowing, AST caller precision, incremental Git reindexing, and language-depth coverage.
 
 ## Quick Start
 

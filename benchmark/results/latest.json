@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-04-28T12:36:33.019Z",
+  "generated_at": "2026-04-28T22:16:55.088Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
-      "classic_chars": 7744,
-      "classic_tokens": 1936,
+      "classic_chars": 14259,
+      "classic_tokens": 3565,
       "mcp_chars": 180,
       "mcp_tokens": 45,
-      "token_savings_pct": 97.7,
+      "token_savings_pct": 98.7,
       "notes": "Find the callTool symbol with broad text search versus compact MCP symbol search.",
       "passed": true
     },
@@ -39,6 +39,41 @@
       "mcp_tokens": 327,
       "token_savings_pct": 79.2,
       "notes": "Narrow a noisy discount regression from broad text matches to compact symbol, history, and decision context.",
+      "passed": true
+    },
+    {
+      "name": "task_success_bugfix_root_symbol",
+      "classic_chars": 2613,
+      "classic_tokens": 654,
+      "mcp_chars": 338,
+      "mcp_tokens": 85,
+      "token_savings_pct": 87,
+      "notes": "Root symbol selected: true; classic files read: 16; MCP bodies read: 0.",
+      "passed": true
+    },
+    {
+      "name": "task_success_refactor_impact",
+      "notes": "Production callers: checkoutPrice, invoicePreview; false positives: none.",
+      "passed": true
+    },
+    {
+      "name": "task_success_regression_narrowing",
+      "notes": "Changed symbols: calculateCheckoutTax, stableCheckoutLabel; linked decisions: calculateCheckoutTax owns regional tax behavior; discussed changed: calculateCheckoutTax.",
+      "passed": true
+    },
+    {
+      "name": "task_success_pr_risk_summary",
+      "notes": "Changed symbols: publicCheckoutApi, internalAuditMarker; related decisions: publicCheckoutApi is an external contract.",
+      "passed": true
+    },
+    {
+      "name": "task_success_discovery_workload",
+      "classic_chars": 2869,
+      "classic_tokens": 718,
+      "mcp_chars": 605,
+      "mcp_tokens": 152,
+      "token_savings_pct": 78.8,
+      "notes": "Classic files read: 20; MCP bodies read: 1; classic false-positive files: 19.",
       "passed": true
     }
   ]

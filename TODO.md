@@ -12,19 +12,9 @@ When an item is completed:
 
 Recommended remaining order:
 
-1. Task-success benchmark suite.
-2. CI matrix and release smoke tests.
-3. NPX/setup smoke tests.
-4. Performance and scale tests.
-5. Dogfooding report.
-
-### Task-Success Benchmarks
-
-- [ ] Bug fix task success: correct root symbol is selected, not just fewer tokens.
-- [ ] Refactor impact analysis: public function callers are found with low false positives.
-- [ ] Regression narrowing: changed symbols and prior decisions identify likely candidates.
-- [ ] PR risk summary: changed symbols and decision conflicts are surfaced compactly.
-- [ ] Compare MCP-assisted discovery against classic shell search by files read, bodies read, token size, and false positives.
+1. NPX runtime smoke tests.
+2. Performance and scale tests.
+3. Dogfooding report.
 
 ### Performance And Scale
 
@@ -36,10 +26,7 @@ Recommended remaining order:
 
 ### Cross-Platform And Release
 
-- [ ] CI matrix for Windows, Ubuntu, and macOS.
-- [ ] CI runs `npm ci`, `npm test`, `npm run benchmark`, `npm run build`, and `npm pack --dry-run`.
 - [ ] `npx -y codex-mcp-memory-server` smoke test.
-- [ ] `setup-codex-mcp-memory` smoke test.
 - [ ] Release checklist covers version bump, changelog/release notes, tag, GitHub release, npm publish, and post-publish install verification.
 
 ### Dogfooding
@@ -63,3 +50,5 @@ Recommended remaining order:
 - Tool contract tests now cover compact body omission, compact ref resolution, invalid or missing symbol body identifiers, deleted-symbol hiding, test caller filtering, and confidence filtering.
 - Project isolation contract tests now cover core symbol, history, decision, caller, context, changed-symbol, discussion, and regression tools across two project IDs with same-name symbols.
 - Database compatibility tests now create a v0.1-style SQLite database in a subprocess, run current `initDb()` twice, verify new columns/tables exist, and confirm legacy symbol, message, and decision records survive migration.
+- Task-success benchmarks now cover bug-fix root symbol selection, refactor impact analysis, regression narrowing, PR risk summaries, and discovery workload comparison so v0.3 measures useful task outcomes, not just smaller text output.
+- CI now runs on Windows, Ubuntu, and macOS with `npm ci`, `npm test`, `npm run benchmark`, `npm run build`, and `npm pack --dry-run`; release smoke also packages the tarball and runs the setup helper through `npx -p`.

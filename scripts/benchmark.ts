@@ -63,6 +63,35 @@ function classicSearch(root: string, query: string) {
     return lines.join('\n');
 }
 
+function classicSearchStats(root: string, query: string) {
+    const files = new Set<string>();
+    const matches: string[] = [];
+    for (const file of recursiveFiles(root)) {
+        if (!/\.(ts|tsx|js|jsx|py)$/.test(file)) continue;
+        const content = fs.readFileSync(file, 'utf8');
+        content.split(/\r?\n/).forEach((line, index) => {
+            if (line.includes(query)) {
+                files.add(file);
+                matches.push(`${file}:${index + 1}: ${line.trim()}`);
+            }
+        });
+    }
+    return {
+        files_read: files.size,
+        matches: matches.length,
+        text: matches.join('\n')
+    };
+}
+
+async function initGitRepo(projectPath: string, message: string) {
+    const { execFileSync } = await import('child_process');
+    execFileSync('git', ['init'], { cwd: projectPath, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: projectPath });
+    execFileSync('git', ['add', '.'], { cwd: projectPath });
+    execFileSync('git', ['commit', '-m', message], { cwd: projectPath, stdio: 'ignore' });
+}
+
 async function withRuntime(projectPath: string, projectId: string) {
     const dbPath = path.join(os.tmpdir(), `mcp-memory-benchmark-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`);
     process.env.MCP_MEMORY_DB_PATH = dbPath;
@@ -225,12 +254,7 @@ async function benchmarkIncrementalReindex(): Promise<BenchmarkResult> {
     writeFile(path.join(projectPath, 'src', 'stable.ts'), 'export function stableSymbol() { return 1; }\n');
     writeFile(path.join(projectPath, 'src', 'changed.ts'), 'export function changedSymbol() { return 1; }\n');
 
-    const { execFileSync } = await import('child_process');
-    execFileSync('git', ['init'], { cwd: projectPath, stdio: 'ignore' });
-    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
-    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: projectPath });
-    execFileSync('git', ['add', '.'], { cwd: projectPath });
-    execFileSync('git', ['commit', '-m', 'initial benchmark files'], { cwd: projectPath, stdio: 'ignore' });
+    await initGitRepo(projectPath, 'initial benchmark files');
 
     const runtime = await withRuntime(projectPath, projectId);
     await runtime.indexFile(path.join(projectPath, 'src', 'stable.ts'), projectId);
@@ -396,6 +420,323 @@ export function discountNote${i}() {
     }
 }
 
+async function benchmarkBugFixRootSymbolSuccess(): Promise<BenchmarkResult> {
+    const projectPath = createTempDir('mcp-memory-benchmark-root-symbol');
+    const projectId = 'benchmark-root-symbol';
+    const sessionId = 'benchmark-root-symbol-session';
+    writeFile(path.join(projectPath, 'src', 'billing', 'invoice.ts'), `
+export function normalizeInvoiceTotal(input: number) {
+  return Math.max(0, Math.round(input * 100) / 100);
+}
+
+export function formatInvoiceTotal(input: number) {
+  return "$" + normalizeInvoiceTotal(input).toFixed(2);
+}
+`);
+    for (let i = 0; i < 16; i++) {
+        writeFile(path.join(projectPath, 'src', 'noise', `invoice-copy-${i}.ts`), `
+export function invoiceCopy${i}() {
+  return "normalize invoice total copy appears in UI text";
+}
+`);
+    }
+
+    const runtime = await withRuntime(projectPath, projectId);
+    const watcher = runtime.startIndexer(projectPath, projectId);
+    try {
+        await waitFor(() => {
+            const row = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0")
+              .get(projectId, 'normalizeInvoiceTotal');
+            return Boolean(row);
+        });
+
+        const now = Date.now();
+        runtime.db.prepare("INSERT INTO sessions (id, project_id, started_at, ended_at) VALUES (?, ?, ?, ?)")
+          .run(sessionId, projectId, now - 1000, now - 500);
+        await runtime.callTool('save_message', {
+            session_id: sessionId,
+            project_id: projectId,
+            role: 'user',
+            content: 'Bug report: negative invoice totals should be clamped by normalizeInvoiceTotal.',
+            explicit_symbols: ['normalizeInvoiceTotal']
+        });
+
+        const classic = classicSearchStats(projectPath, 'invoice total');
+        const symbols = await runtime.callTool('search_symbols', {
+            project_id: projectId,
+            query: 'normalizeInvoiceTotal',
+            limit: 3
+        });
+        const history = await runtime.callTool('search_history', {
+            project_id: projectId,
+            query: 'normalizeInvoiceTotal',
+            limit: 2
+        });
+        const mcpText = `${symbols.content[0].text}\n${history.content[0].text}`;
+        const parsedSymbols = JSON.parse(symbols.content[0].text);
+        const rootSelected = parsedSymbols[0]?.name === 'normalizeInvoiceTotal';
+        const classicTokens = approxTokens(classic.text);
+        const mcpTokens = approxTokens(mcpText);
+
+        return {
+            name: 'task_success_bugfix_root_symbol',
+            classic_chars: classic.text.length,
+            classic_tokens: classicTokens,
+            mcp_chars: mcpText.length,
+            mcp_tokens: mcpTokens,
+            token_savings_pct: Math.round((1 - (mcpTokens / classicTokens)) * 1000) / 10,
+            notes: `Root symbol selected: ${rootSelected}; classic files read: ${classic.files_read}; MCP bodies read: 0.`,
+            passed: rootSelected && mcpTokens < classicTokens
+        };
+    } finally {
+        await watcher.close();
+    }
+}
+
+async function benchmarkRefactorImpactAnalysis(): Promise<BenchmarkResult> {
+    const projectPath = createTempDir('mcp-memory-benchmark-refactor-impact');
+    const projectId = 'benchmark-refactor-impact';
+    const targetFile = path.join(projectPath, 'src', 'pricing.ts');
+    writeFile(targetFile, `
+export function calculatePublicPrice(amount: number) {
+  return amount * 1.2;
+}
+
+export function checkoutPrice(amount: number) {
+  return calculatePublicPrice(amount);
+}
+
+export function invoicePreview(amount: number) {
+  return calculatePublicPrice(amount);
+}
+
+export function mentionOnly() {
+  return "calculatePublicPrice";
+}
+`);
+    writeFile(path.join(projectPath, 'src', 'pricing.test.ts'), `
+import { calculatePublicPrice } from "./pricing";
+
+export function testPrice() {
+  return calculatePublicPrice(10);
+}
+`);
+
+    const runtime = await withRuntime(projectPath, projectId);
+    const watcher = runtime.startIndexer(projectPath, projectId);
+    try {
+        await waitFor(() => {
+            const row = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'calculatePublicPrice', targetFile);
+            return Boolean(row);
+        });
+
+        const target = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'calculatePublicPrice', targetFile) as { id: string };
+        const result = await runtime.callTool('find_callers', {
+            symbol_id: target.id,
+            include_tests: false,
+            min_confidence: 0.8
+        });
+        const payload = JSON.parse(result.content[0].text);
+        const callers = payload.definite_callers.map((caller: any) => caller.qualified_name);
+        const falsePositives = callers.filter((name: string) => name === 'mentionOnly' || name === 'testPrice');
+        const expected = ['checkoutPrice', 'invoicePreview'].every(name => callers.includes(name));
+
+        return {
+            name: 'task_success_refactor_impact',
+            notes: `Production callers: ${callers.join(', ') || 'none'}; false positives: ${falsePositives.join(', ') || 'none'}.`,
+            passed: expected && falsePositives.length === 0
+        };
+    } finally {
+        await watcher.close();
+    }
+}
+
+async function benchmarkRegressionNarrowing(): Promise<BenchmarkResult> {
+    const projectPath = createTempDir('mcp-memory-benchmark-regression-narrowing');
+    const projectId = 'benchmark-regression-narrowing';
+    const sessionId = 'benchmark-regression-session';
+    const filePath = path.join(projectPath, 'src', 'checkout.ts');
+    writeFile(filePath, `
+export function calculateCheckoutTax(amount: number) {
+  return amount * 0.18;
+}
+
+export function stableCheckoutLabel() {
+  return "checkout";
+}
+`);
+    await initGitRepo(projectPath, 'initial checkout logic');
+
+    const runtime = await withRuntime(projectPath, projectId);
+    await runtime.indexFile(filePath, projectId);
+    const now = Date.now();
+    runtime.db.prepare("INSERT INTO sessions (id, project_id, started_at, ended_at) VALUES (?, ?, ?, ?)")
+      .run(sessionId, projectId, now - 2000, now - 1500);
+    await runtime.callTool('save_message', {
+        session_id: sessionId,
+        project_id: projectId,
+        role: 'user',
+        content: 'Prior regression discussion: calculateCheckoutTax is sensitive to regional tax changes.',
+        explicit_symbols: ['calculateCheckoutTax']
+    });
+    await runtime.callTool('save_decision', {
+        project_id: projectId,
+        summary: 'calculateCheckoutTax owns regional tax behavior',
+        rationale: 'Checkout totals should not duplicate tax logic elsewhere.',
+        source_session: sessionId,
+        related_symbols: ['calculateCheckoutTax']
+    });
+
+    writeFile(filePath, `
+export function calculateCheckoutTax(amount: number) {
+  return amount * 0.20;
+}
+
+export function stableCheckoutLabel() {
+  return "checkout";
+}
+`);
+    await runtime.reindexChangedFiles(projectPath, projectId);
+    const risk = JSON.parse((await runtime.callTool('changed_symbols_risk', {
+        project_id: projectId,
+        project_path: projectPath
+    })).content[0].text);
+    const discussed = JSON.parse((await runtime.callTool('symbols_discussed_and_changed', {
+        project_id: projectId
+    })).content[0].text);
+    const changedNames = risk.changed_symbols.map((symbol: any) => symbol.name);
+    const decisionSummaries = risk.related_decisions.map((decision: any) => decision.summary);
+    const discussedNames = discussed.map((row: any) => row.name);
+
+    return {
+        name: 'task_success_regression_narrowing',
+        notes: `Changed symbols: ${changedNames.join(', ') || 'none'}; linked decisions: ${decisionSummaries.join(', ') || 'none'}; discussed changed: ${discussedNames.join(', ') || 'none'}.`,
+        passed: changedNames.includes('calculateCheckoutTax')
+            && decisionSummaries.some((summary: string) => summary.includes('regional tax'))
+            && discussedNames.includes('calculateCheckoutTax')
+    };
+}
+
+async function benchmarkPrRiskSummary(): Promise<BenchmarkResult> {
+    const projectPath = createTempDir('mcp-memory-benchmark-pr-risk');
+    const projectId = 'benchmark-pr-risk';
+    const sessionId = 'benchmark-pr-risk-session';
+    const publicFile = path.join(projectPath, 'src', 'api.ts');
+    const internalFile = path.join(projectPath, 'src', 'internal.ts');
+    writeFile(publicFile, `
+export function publicCheckoutApi(input: number) {
+  return input;
+}
+`);
+    writeFile(internalFile, `
+export function internalAuditMarker() {
+  return "ok";
+}
+`);
+    await initGitRepo(projectPath, 'initial api');
+
+    const runtime = await withRuntime(projectPath, projectId);
+    await runtime.indexFile(publicFile, projectId);
+    await runtime.indexFile(internalFile, projectId);
+    const now = Date.now();
+    runtime.db.prepare("INSERT INTO sessions (id, project_id, started_at, ended_at) VALUES (?, ?, ?, ?)")
+      .run(sessionId, projectId, now - 1000, now - 500);
+    await runtime.callTool('save_decision', {
+        project_id: projectId,
+        summary: 'publicCheckoutApi is an external contract',
+        rationale: 'Any PR changing it should be called out in risk summaries.',
+        source_session: sessionId,
+        related_symbols: ['publicCheckoutApi']
+    });
+
+    writeFile(publicFile, `
+export function publicCheckoutApi(input: number) {
+  return input + 1;
+}
+`);
+    writeFile(internalFile, `
+export function internalAuditMarker() {
+  return "changed";
+}
+`);
+    await runtime.reindexChangedFiles(projectPath, projectId);
+    const risk = JSON.parse((await runtime.callTool('changed_symbols_risk', {
+        project_id: projectId,
+        project_path: projectPath
+    })).content[0].text);
+    const changedNames = risk.changed_symbols.map((symbol: any) => symbol.name);
+    const decisionSummaries = risk.related_decisions.map((decision: any) => decision.summary);
+
+    return {
+        name: 'task_success_pr_risk_summary',
+        notes: `Changed symbols: ${changedNames.join(', ') || 'none'}; related decisions: ${decisionSummaries.join(', ') || 'none'}.`,
+        passed: changedNames.includes('publicCheckoutApi')
+            && changedNames.includes('internalAuditMarker')
+            && decisionSummaries.length === 1
+            && decisionSummaries[0].includes('external contract')
+    };
+}
+
+async function benchmarkDiscoveryWorkloadComparison(): Promise<BenchmarkResult> {
+    const projectPath = createTempDir('mcp-memory-benchmark-workload');
+    const projectId = 'benchmark-workload';
+    writeFile(path.join(projectPath, 'src', 'target.ts'), `
+export function reconcilePaymentState() {
+  return "reconciled";
+}
+`);
+    for (let i = 0; i < 20; i++) {
+        writeFile(path.join(projectPath, 'src', 'logs', `payment-log-${i}.ts`), `
+export function paymentLog${i}() {
+  return "payment state reconciliation log";
+}
+`);
+    }
+
+    const runtime = await withRuntime(projectPath, projectId);
+    const watcher = runtime.startIndexer(projectPath, projectId);
+    try {
+        await waitFor(() => {
+            const row = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0")
+              .get(projectId, 'reconcilePaymentState');
+            return Boolean(row);
+        });
+
+        const classic = classicSearchStats(projectPath, 'payment state');
+        const symbols = await runtime.callTool('search_symbols', {
+            project_id: projectId,
+            query: 'reconcilePaymentState',
+            limit: 5
+        });
+        const target = JSON.parse(symbols.content[0].text)[0];
+        const body = await runtime.callTool('get_symbol_body', {
+            project_id: projectId,
+            ref: target.ref
+        });
+        const mcpText = `${symbols.content[0].text}\n${body.content[0].text}`;
+        const classicTokens = approxTokens(classic.text);
+        const mcpTokens = approxTokens(mcpText);
+        const falsePositiveFiles = classic.files_read - 1;
+
+        return {
+            name: 'task_success_discovery_workload',
+            classic_chars: classic.text.length,
+            classic_tokens: classicTokens,
+            mcp_chars: mcpText.length,
+            mcp_tokens: mcpTokens,
+            token_savings_pct: Math.round((1 - (mcpTokens / classicTokens)) * 1000) / 10,
+            notes: `Classic files read: ${classic.files_read}; MCP bodies read: 1; classic false-positive files: ${falsePositiveFiles}.`,
+            passed: target.name === 'reconcilePaymentState'
+                && falsePositiveFiles >= 10
+                && mcpTokens < classicTokens
+        };
+    } finally {
+        await watcher.close();
+    }
+}
+
 function writeReports(results: BenchmarkResult[]) {
     const outDir = path.join(process.cwd(), 'benchmark', 'results');
     fs.mkdirSync(outDir, { recursive: true });
@@ -425,7 +766,12 @@ async function main() {
         await benchmarkAstImportResolverPrecision(),
         await benchmarkIncrementalReindex(),
         await benchmarkLanguageDepth(),
-        await benchmarkBugFixInvestigationNarrowing()
+        await benchmarkBugFixInvestigationNarrowing(),
+        await benchmarkBugFixRootSymbolSuccess(),
+        await benchmarkRefactorImpactAnalysis(),
+        await benchmarkRegressionNarrowing(),
+        await benchmarkPrRiskSummary(),
+        await benchmarkDiscoveryWorkloadComparison()
     ];
     writeReports(results);
     console.log(JSON.stringify(results, null, 2));

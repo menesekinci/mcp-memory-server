@@ -54,11 +54,12 @@ async function withIsolatedRuntime() {
         reindexChangedFiles: indexer.reindexChangedFiles,
         reconcileProjectFiles: indexer.reconcileProjectFiles,
         callTool: server.callTool,
+        listTools: server.listTools,
         indexGitHistory: gitParser.indexGitHistory
     };
 }
 
-async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<string, any>) => Promise<any>) {
+async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<string, any>) => Promise<any>, listTools: () => Promise<any>) {
     const projectId = 'tools-project';
     const sessionId = 'tools-session';
     const now = Date.now();
@@ -78,9 +79,23 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
         INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `).run(`${projectId}:caller.test.ts:function:checkoutTest`, projectId, 'checkoutTest', 'checkoutTest', 'function', 'caller.test.ts', 1, 3, 'function checkoutTest()', 'function checkoutTest() { return calculateTotal(); }', 'typescript', now);
+    db.prepare(`
+        INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `).run(`${projectId}:memory.ts:class:TotalCalculator`, projectId, 'TotalCalculator', 'TotalCalculator', 'class', 'memory.ts', 5, 8, 'class TotalCalculator', 'class TotalCalculator {}', 'typescript', now);
+    db.prepare(`
+        INSERT INTO symbol_history (id, symbol_id, version, body, signature, start_line, end_line, commit_sha, commit_message, commit_author, commit_at, change_type, branch, pr_reference)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('history-calculateTotal-v1', symbolId, 1, 'function calculateTotal() { return 0; }', 'function calculateTotal()', 1, 3, 'abc123', 'initial total', 'Test User', now - 5000, 'modified', 'main', null);
 
     db.prepare("INSERT INTO sessions (id, project_id, started_at, ended_at) VALUES (?, ?, ?, ?)")
       .run(sessionId, projectId, now - 1000, now - 500);
+
+    const tools = await listTools();
+    const toolNames = tools.tools.map((tool: any) => tool.name);
+    for (const expected of ['search_symbols', 'lookup_symbol', 'get_symbol_body', 'find_callers', 'reindex_changed_files', 'reconcile_index', 'changed_symbols_risk']) {
+        assert(toolNames.includes(expected), `listTools should expose ${expected}`);
+    }
 
     const saved = await callTool('save_message', {
         session_id: sessionId,
@@ -111,9 +126,17 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
         query: 'calc',
         limit: 5
     }));
-    assert(symbolSearch.length === 1 && !('body' in symbolSearch[0]), 'search_symbols should return compact symbol matches');
+    assert(symbolSearch.some(symbol => symbol.name === 'calculateTotal') && symbolSearch.every(symbol => !('body' in symbol)), 'search_symbols should return compact symbol matches');
     assert('ref' in symbolSearch[0] && !('id' in symbolSearch[0]), 'search_symbols should use compact refs by default');
     assert(!JSON.stringify(symbolSearch).includes('return 1'), 'compact search_symbols output should not leak symbol bodies');
+    const classSearch = parseToolJson<any[]>(await callTool('search_symbols', {
+        project_id: projectId,
+        query: 'Total',
+        kind: 'class',
+        verbose: true
+    }));
+    assert(classSearch.length === 1 && classSearch[0].kind === 'class' && classSearch[0].id.includes('TotalCalculator'), 'search_symbols should filter by kind and expose verbose metadata');
+    assert(!('body' in classSearch[0]), 'search_symbols verbose=true should not include bodies unless explicitly supported');
 
     const symbolBody = parseToolJson<any>(await callTool('get_symbol_body', {
         symbol_id: symbolId
@@ -136,6 +159,15 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
         project_id: projectId
     });
     assert(missingSymbolId.content[0].text === 'Symbol not found.', 'missing symbol_id/ref should return a useful not-found message');
+    const historyWithoutBody = parseToolJson<any[]>(await callTool('get_symbol_history', {
+        symbol_id: symbolId
+    }));
+    assert(historyWithoutBody.length === 1 && !('body' in historyWithoutBody[0]), 'get_symbol_history should omit body by default');
+    const historyWithBody = parseToolJson<any[]>(await callTool('get_symbol_history', {
+        symbol_id: symbolId,
+        include_body: true
+    }));
+    assert(historyWithBody[0].body.includes('return 0'), 'get_symbol_history include_body=true should include history bodies');
 
     const searchResults = parseToolJson<any[]>(await callTool('search_history', {
         project_id: projectId,
@@ -158,6 +190,10 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
         min_confidence: 0.9
     }));
     assert(highConfidenceCallers.probable_callers.length === 0, 'min_confidence should filter fuzzy probable callers');
+    const missingCallers = await callTool('find_callers', {
+        symbol_id: `${projectId}:missing.ts:function:missingSymbol`
+    });
+    assert(missingCallers.content[0].text === 'Symbol not found.', 'find_callers should return a useful not-found message for unknown symbols');
 
     db.prepare("UPDATE symbols SET is_deleted = 1 WHERE id = ?").run(symbolId);
     const deletedLookup = parseToolJson<any[]>(await callTool('lookup_symbol', {
@@ -206,6 +242,14 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
         status: 'all'
     }));
     assert(allDecisions.length === 1 && allDecisions[0].status === 'superseded', 'forget_session raw_and_derived should supersede derived decisions');
+
+    let unknownToolFailed = false;
+    try {
+        await callTool('missing_tool_for_contract_test');
+    } catch (error: any) {
+        unknownToolFailed = error.message.includes('Tool not found');
+    }
+    assert(unknownToolFailed, 'unknown tools should fail with a clear Tool not found error');
 }
 
 async function testProjectIsolationContracts(db: TestDb, callTool: (name: string, args?: Record<string, any>) => Promise<any>) {
@@ -963,6 +1007,17 @@ async function testGitAwareIncrementalIndexing(
     const deletedSymbol = db.prepare("SELECT is_deleted FROM symbols WHERE project_id = ? AND file_path = ? AND name = ?")
       .get(projectId, deletedPath, 'deletedLater') as { is_deleted: number } | undefined;
     assert(deletedSymbol?.is_deleted === 1, 'reconcileProjectFiles should mark symbols from missing files as deleted');
+    const deletedRiskHidden = parseToolJson<{ changed_symbols: any[] }>(await callTool('changed_symbols_risk', {
+        project_id: projectId,
+        project_path: projectPath
+    }));
+    assert(!deletedRiskHidden.changed_symbols.some(symbol => symbol.name === 'deletedLater'), 'changed_symbols_risk should hide deleted symbols by default');
+    const deletedRiskVisible = parseToolJson<{ changed_symbols: any[] }>(await callTool('changed_symbols_risk', {
+        project_id: projectId,
+        project_path: projectPath,
+        include_deleted: true
+    }));
+    assert(deletedRiskVisible.changed_symbols.some(symbol => symbol.name === 'deletedLater'), 'changed_symbols_risk include_deleted=true should include deleted changed symbols');
 
     writeFile(path.join(projectPath, 'src', 'via-tool.ts'), 'export function viaTool() { return 1; }\n');
     const toolResult = parseToolJson<{ changed_files: number; indexed: number }>(await callTool('reindex_changed_files', {
@@ -1117,7 +1172,7 @@ async function testGitHistory(db: TestDb, indexGitHistory: (projectPath: string,
 async function main() {
     const runtime = await withIsolatedRuntime();
 
-    await testMcpTools(runtime.db, runtime.callTool);
+    await testMcpTools(runtime.db, runtime.callTool, runtime.listTools);
     console.log('MCP tool integration tests passed.');
 
     await testProjectIsolationContracts(runtime.db, runtime.callTool);

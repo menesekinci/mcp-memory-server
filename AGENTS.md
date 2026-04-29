@@ -97,7 +97,7 @@ When an item is completed, move its concrete result into Completed Validation No
 - Merge reconciliation tests now cover same-file changes on both branches, including a conflict-resolution path, so final merged symbol bodies are reindexed correctly.
 - History rewrite tests now cover amended commits so same-path symbol bodies refresh after rewrite-style changes.
 - Large branch switch tests now remove and replace a batch of files to ensure stale symbols are deleted and replacement symbols become active.
-- Tool contract tests now cover compact body omission, compact ref resolution, invalid or missing symbol body identifiers, deleted-symbol hiding, test caller filtering, and confidence filtering.
+- Tool contract tests now cover tool listing, compact body omission, compact ref resolution, kind-filtered verbose search, symbol history body gating, invalid or missing symbol body identifiers, unknown tool errors, missing caller targets, deleted-symbol hiding, test caller filtering, and confidence filtering.
 - Project isolation contract tests now cover core symbol, history, decision, caller, context, changed-symbol, discussion, and regression tools across two project IDs with same-name symbols.
 - Database compatibility tests now create a v0.1-style SQLite database in a subprocess, run current `initDb()` twice, verify new columns/tables exist, and confirm legacy symbol, message, and decision records survive migration.
 - Task-success benchmarks now cover bug-fix root symbol selection, refactor impact analysis, regression narrowing, PR risk summaries, and discovery workload comparison. This keeps v0.3 validation focused on useful task outcomes, not only smaller discovery output.
@@ -109,6 +109,7 @@ When an item is completed, move its concrete result into Completed Validation No
 - TS/TSX language depth now covers simple constructor/type-annotation instance method calls and TSX/JSX component usage graph edges, with integration and benchmark coverage added so component callers and class-method callers are visible through `find_callers`.
 - TypeScript compiler API resolution now runs selectively for semantic cases such as imported symbols, JSX components, and typed/member calls. This resolves function-return-typed instance method calls while preserving the tree-sitter fast path for plain same-file code so the 10k-symbol scale benchmark remains stable.
 - Monorepo performance validation now includes `performance_monorepo_workspace`, a synthetic 20-package workspace benchmark covering cold indexing, symbol search, caller lookup, incremental reindex, changed-symbol risk, database growth, and ignored generated output.
+- Git risk tests now cover `changed_symbols_risk` deleted-symbol visibility, including the default hidden behavior and `include_deleted` opt-in.
 
 ## Verification
 

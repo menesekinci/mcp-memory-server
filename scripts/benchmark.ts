@@ -943,6 +943,120 @@ async function benchmarkPerformanceScale(): Promise<BenchmarkResult> {
     };
 }
 
+async function benchmarkMonorepoScale(): Promise<BenchmarkResult> {
+    const projectPath = createTempDir('mcp-memory-benchmark-monorepo');
+    const projectId = 'benchmark-monorepo';
+    const packageCount = 20;
+    const filesPerPackage = 40;
+    const functionsPerFile = 6;
+    const targetPackage = packageCount - 1;
+    const targetFileIndex = filesPerPackage - 1;
+    const targetFnIndex = functionsPerFile - 1;
+    const targetName = `pkg${targetPackage}Symbol_${targetFileIndex}_${targetFnIndex}`;
+
+    writeFile(path.join(projectPath, 'package.json'), JSON.stringify({
+        private: true,
+        workspaces: ['packages/*']
+    }, null, 2));
+
+    for (let packageIndex = 0; packageIndex < packageCount; packageIndex++) {
+        const packageRoot = path.join(projectPath, 'packages', `pkg-${packageIndex}`);
+        writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+            name: `@benchmark/pkg-${packageIndex}`,
+            version: '0.0.0'
+        }, null, 2));
+        writeFile(path.join(packageRoot, 'dist', 'generated.ts'), 'export function generatedMonorepoOutput() { return 1; }\n');
+
+        for (let fileIndex = 0; fileIndex < filesPerPackage; fileIndex++) {
+            const lines: string[] = [];
+            for (let fnIndex = 0; fnIndex < functionsPerFile; fnIndex++) {
+                const name = `pkg${packageIndex}Symbol_${fileIndex}_${fnIndex}`;
+                if (packageIndex === 0 && fileIndex === 0 && fnIndex === 1) {
+                    lines.push(`export function ${name}() { return pkg0Symbol_0_0(); }`);
+                } else {
+                    lines.push(`export function ${name}() { return ${packageIndex + fileIndex + fnIndex}; }`);
+                }
+            }
+            writeFile(path.join(packageRoot, 'src', `module-${String(fileIndex).padStart(3, '0')}.ts`), `${lines.join('\n')}\n`);
+        }
+    }
+
+    await initGitRepo(projectPath, 'initial monorepo benchmark');
+
+    const runtime = await withRuntime(projectPath, projectId);
+    const sourceFiles = recursiveFiles(projectPath)
+        .filter(file => file.endsWith('.ts') && file.includes(`${path.sep}src${path.sep}`));
+
+    const coldStartedAt = performance.now();
+    for (const file of sourceFiles) {
+        await runtime.indexFile(file, projectId);
+    }
+    const coldIndexMs = Math.round(performance.now() - coldStartedAt);
+
+    const searchStartedAt = performance.now();
+    const searchResult = await runtime.callTool('search_symbols', {
+        project_id: projectId,
+        query: targetName,
+        limit: 5
+    });
+    const searchMs = Math.round((performance.now() - searchStartedAt) * 10) / 10;
+
+    const callerTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0")
+      .get(projectId, 'pkg0Symbol_0_0') as { id: string };
+    const callerStartedAt = performance.now();
+    const callers = JSON.parse((await runtime.callTool('find_callers', {
+        symbol_id: callerTarget.id,
+        min_confidence: 0.8
+    })).content[0].text);
+    const callerMs = Math.round((performance.now() - callerStartedAt) * 10) / 10;
+
+    const changedFile = path.join(projectPath, 'packages', `pkg-${targetPackage}`, 'src', `module-${String(targetFileIndex).padStart(3, '0')}.ts`);
+    writeFile(changedFile, `${fs.readFileSync(changedFile, 'utf8')}\nexport function ${targetName}_changed() { return 999; }\n`);
+    const incrementalStartedAt = performance.now();
+    const incremental = await runtime.reindexChangedFiles(projectPath, projectId);
+    const incrementalMs = Math.round((performance.now() - incrementalStartedAt) * 10) / 10;
+
+    for (let packageIndex = 0; packageIndex < 5; packageIndex++) {
+        const file = path.join(projectPath, 'packages', `pkg-${packageIndex}`, 'src', 'module-001.ts');
+        writeFile(file, `${fs.readFileSync(file, 'utf8')}\nexport function pkg${packageIndex}RiskMarker() { return ${packageIndex}; }\n`);
+    }
+    const riskStartedAt = performance.now();
+    const risk = JSON.parse((await runtime.callTool('changed_symbols_risk', {
+        project_id: projectId,
+        project_path: projectPath
+    })).content[0].text);
+    const riskMs = Math.round((performance.now() - riskStartedAt) * 10) / 10;
+
+    const dbInfo = runtime.db.prepare("PRAGMA database_list").all() as Array<{ file: string }>;
+    const dbPath = dbInfo.find(row => row.file)?.file;
+    const dbSizeMb = dbPath && fs.existsSync(dbPath)
+        ? Math.round((fs.statSync(dbPath).size / 1024 / 1024) * 10) / 10
+        : 0;
+    const symbolCount = (runtime.db.prepare("SELECT COUNT(*) as count FROM symbols WHERE project_id = ? AND is_deleted = 0")
+      .get(projectId) as { count: number }).count;
+    const searchPayload = JSON.parse(searchResult.content[0].text);
+    const callerNames = callers.definite_callers.map((caller: any) => caller.qualified_name);
+    const generatedSymbol = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0")
+      .get(projectId, 'generatedMonorepoOutput');
+
+    return {
+        name: 'performance_monorepo_workspace',
+        notes: `Cold index: ${coldIndexMs}ms for ${packageCount} packages/${sourceFiles.length} files/${symbolCount} symbols; search: ${searchMs}ms; caller: ${callerMs}ms; incremental: ${incrementalMs}ms for ${incremental.changed_files} changed file; risk: ${riskMs}ms for ${risk.changed_files.length} changed files; db: ${dbSizeMb}MB.`,
+        passed: symbolCount >= packageCount * filesPerPackage * functionsPerFile
+            && searchPayload[0]?.name === targetName
+            && callerNames.includes('pkg0Symbol_0_1')
+            && incremental.changed_files === 1
+            && risk.changed_files.length >= 5
+            && !generatedSymbol
+            && coldIndexMs < 120000
+            && searchMs < 1000
+            && callerMs < 1000
+            && incrementalMs < 10000
+            && riskMs < 10000
+            && dbSizeMb < 100
+    };
+}
+
 function writeReports(results: BenchmarkResult[]) {
     const outDir = path.join(process.cwd(), 'benchmark', 'results');
     fs.mkdirSync(outDir, { recursive: true });
@@ -979,7 +1093,8 @@ async function main() {
         await benchmarkRegressionNarrowing(),
         await benchmarkPrRiskSummary(),
         await benchmarkDiscoveryWorkloadComparison(),
-        await benchmarkPerformanceScale()
+        await benchmarkPerformanceScale(),
+        await benchmarkMonorepoScale()
     ];
     writeReports(results);
     console.log(JSON.stringify(results, null, 2));

@@ -30,16 +30,17 @@ benchmark/results/latest.md
 | `task_success_pr_risk_summary` | Confirms changed-symbol risk summaries surface linked decisions for PR review. |
 | `task_success_discovery_workload` | Compares classic search and MCP-assisted discovery by files read, bodies read, token size, and false positives. |
 | `performance_scale_10k_symbols` | Smoke-tests cold indexing, search, caller lookup, incremental reindex, DB growth, and broad changed-symbol risk on a synthetic 10k-symbol project. |
+| `performance_monorepo_workspace` | Smoke-tests a synthetic workspace with many packages, ignored build output, search, caller lookup, incremental reindex, and changed-symbol risk. |
 
 ## Latest Result
 
 The current measured discovery task is: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=4140
+classic_tokens=4236
 mcp_tokens=45
 savings=98.9%
-smaller_output=92.0x
+smaller_output=94.1x
 ```
 
 Token counts are practical estimates using `characters / 4`. The benchmark measures discovery output size, not final answer quality.
@@ -55,5 +56,6 @@ The suite now includes task-shaped checks beyond raw output size:
 - PR risk summary through changed symbols and linked decisions.
 - Discovery workload comparison by files read, bodies read, token size, and false positives.
 - Performance and scale regression smoke for a synthetic 1k-file, 10k-symbol project.
+- Monorepo workspace scale smoke for a synthetic 20-package workspace with ignored generated output.
 - Git edge cases such as checkout, merge, rename, delete, staged, and untracked states.
 - Language-depth checks for Python package re-exports and simple constructor-assigned instance method calls.

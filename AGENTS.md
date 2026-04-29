@@ -79,7 +79,6 @@ The original low-token MCP discovery goal has been reached. The active direction
 
 - More real-repository dogfooding, with findings recorded in `docs/dogfooding.md` and converted into tests or docs updates.
 - More edge-case tests for Git reconciliation, caller resolution, project isolation, database migration, and MCP tool contracts.
-- Larger monorepo performance tests beyond the current 1k-file/10k-symbol synthetic benchmark.
 - Better onboarding and setup verification so users can confirm `npx`, Codex MCP registration, project path, DB path, and runtime readiness quickly.
 - Deeper Python and additional language semantic resolution after TS/Python benchmarks stay stable.
 - Release polish before v0.4/v1.0, including changelog, package contents review, install smoke, docs review, and version bump discipline.
@@ -109,6 +108,7 @@ When an item is completed, move its concrete result into Completed Validation No
 - Python language depth now covers package `__init__.py` re-export chains and simple constructor-assigned instance method calls, with integration and benchmark coverage added so `find_callers` can resolve practical Python package call paths beyond same-file references.
 - TS/TSX language depth now covers simple constructor/type-annotation instance method calls and TSX/JSX component usage graph edges, with integration and benchmark coverage added so component callers and class-method callers are visible through `find_callers`.
 - TypeScript compiler API resolution now runs selectively for semantic cases such as imported symbols, JSX components, and typed/member calls. This resolves function-return-typed instance method calls while preserving the tree-sitter fast path for plain same-file code so the 10k-symbol scale benchmark remains stable.
+- Monorepo performance validation now includes `performance_monorepo_workspace`, a synthetic 20-package workspace benchmark covering cold indexing, symbol search, caller lookup, incremental reindex, changed-symbol risk, database growth, and ignored generated output.
 
 ## Verification
 

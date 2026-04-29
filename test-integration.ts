@@ -659,15 +659,23 @@ export function App() {
 
     const watcher = startIndexer(projectPath, projectId);
     try {
+        const waitForSymbol = async (name: string, filePath: string) => {
+            let symbol: { id: string } | undefined;
+            await waitFor(() => {
+                symbol = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+                  .get(projectId, name, filePath) as { id: string } | undefined;
+                return Boolean(symbol);
+            });
+            return symbol!;
+        };
+
         await waitFor(() => {
             const row = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0")
               .get(projectId, 'checkout');
             return Boolean(row);
         });
 
-        const target = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
-          .get(projectId, 'sameFileTotal', filePath) as { id: string } | undefined;
-        assert(target, 'target symbol should be indexed for call graph test');
+        const target = await waitForSymbol('sameFileTotal', filePath);
 
         await waitFor(() => {
             const row = db.prepare("SELECT COUNT(*) as count FROM symbol_calls WHERE project_id = ? AND target_name = ?")
@@ -683,9 +691,7 @@ export function App() {
         assert(callers.definite_callers.some(c => c.qualified_name === 'sameFileCheckout' && c.resolution_method === 'ts_checker_symbol'), 'TypeScript checker should mark same-file calls as definite callers');
         assert(callers.probable_callers.some(c => c.qualified_name === 'mentionOnly'), 'fuzzy fallback should keep mention-only matches as probable callers');
 
-        const importedTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
-          .get(projectId, 'calculateTotal', mathFile) as { id: string } | undefined;
-        assert(importedTarget, 'imported target symbol should be indexed');
+        const importedTarget = await waitForSymbol('calculateTotal', mathFile);
 
         const importedCallers = parseToolJson<{ definite_callers: any[]; probable_callers: any[] }>(await callTool('find_callers', {
             symbol_id: importedTarget.id,
@@ -695,27 +701,21 @@ export function App() {
         assert(!importedCallers.definite_callers.some(c => c.qualified_name === 'shadowedCheckout'), 'local shadowing should prevent imported AST caller edges');
         assert(!importedCallers.definite_callers.some(c => c.qualified_name === 'otherCheckout'), 'same-name imports from other files should not point to the wrong target');
 
-        const otherTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
-          .get(projectId, 'calculateTotal', otherFile) as { id: string } | undefined;
-        assert(otherTarget, 'duplicate target symbol should be indexed');
+        const otherTarget = await waitForSymbol('calculateTotal', otherFile);
         const otherCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
             symbol_id: otherTarget.id,
             min_confidence: 0.0
         }));
         assert(otherCallers.definite_callers.some(c => c.qualified_name === 'otherCheckout'), 'aliased direct import should resolve to its source file');
 
-        const methodTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
-          .get(projectId, 'total', serviceFile) as { id: string } | undefined;
-        assert(methodTarget, 'TypeScript class method target should be indexed');
+        const methodTarget = await waitForSymbol('total', serviceFile);
         const methodCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
             symbol_id: methodTarget.id,
             min_confidence: 0.0
         }));
         assert(methodCallers.definite_callers.some(c => c.qualified_name === 'App' && c.resolution_method === 'ts_checker_symbol'), 'TypeScript checker should resolve instance methods through function return types');
 
-        const componentTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
-          .get(projectId, 'CheckoutButton', buttonFile) as { id: string } | undefined;
-        assert(componentTarget, 'TSX component target should be indexed');
+        const componentTarget = await waitForSymbol('CheckoutButton', buttonFile);
         const componentCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
             symbol_id: componentTarget.id,
             min_confidence: 0.0

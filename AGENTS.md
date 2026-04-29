@@ -110,6 +110,7 @@ When an item is completed, move its concrete result into Completed Validation No
 - TypeScript compiler API resolution now runs selectively for semantic cases such as imported symbols, JSX components, and typed/member calls. This resolves function-return-typed instance method calls while preserving the tree-sitter fast path for plain same-file code so the 10k-symbol scale benchmark remains stable.
 - Monorepo performance validation now includes `performance_monorepo_workspace`, a synthetic 20-package workspace benchmark covering cold indexing, symbol search, caller lookup, incremental reindex, changed-symbol risk, database growth, and ignored generated output.
 - Git risk tests now cover `changed_symbols_risk` deleted-symbol visibility, including the default hidden behavior and `include_deleted` opt-in.
+- Ubuntu CI coverage now waits for every AST call-graph fixture symbol before assertions, removing a platform-specific watcher ordering race where imported targets could be checked before indexing finished.
 
 ## Verification
 

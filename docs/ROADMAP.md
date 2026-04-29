@@ -74,5 +74,6 @@ This roadmap keeps the project focused. Each phase should improve either measure
 - [x] Add Python `self.method()` caller extraction.
 - [x] Add Python package `__init__.py` re-export handling.
 - [x] Add Python simple constructor-assigned instance method resolution beyond `self`.
+- [x] Add lightweight TypeScript constructor/type-annotation instance method resolution.
+- [x] Add TSX/JSX component usage graph.
 - [ ] Add TypeScript compiler API based type-aware resolution.
-- [ ] Add TSX/JSX component usage graph.

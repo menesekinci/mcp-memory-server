@@ -26,21 +26,41 @@ export function extractCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[
 
     const calls: CallReference[] = [];
     const imports = extractImports(tree.rootNode, filePath);
+    const objectTypes = extractObjectTypes(tree.rootNode, filePath, imports);
 
     function traverse(node: Parser.SyntaxNode) {
         if (node.type === 'call_expression' || node.type === 'new_expression') {
             const callee = extractCallee(node);
             const caller = findContainingSymbol(symbols, node.startPosition.row + 1);
-            if (callee && caller && (callee.memberName || callee.localName) !== caller.name && !isShadowed(tree.rootNode, caller, callee.localName, node.startIndex)) {
-                const imported = resolveImportedTarget(callee, imports);
+            if (callee && caller && (callee.memberName || callee.localName) !== caller.name) {
+                const instanceMethod = callee.memberName
+                    ? resolveInstanceMethod(callee, objectTypes)
+                    : null;
+                if (!instanceMethod && isShadowed(tree.rootNode, caller, callee.localName, node.startIndex)) return;
+                const imported = instanceMethod ? null : resolveImportedTarget(callee, imports);
                 calls.push({
                     caller_symbol_id: caller.id,
-                    target_name: imported?.name || callee.memberName || callee.localName,
+                    target_name: imported?.name || instanceMethod?.name || callee.memberName || callee.localName,
+                    target_file_path: imported?.filePath || instanceMethod?.filePath,
+                    file_path: filePath,
+                    line: node.startPosition.row + 1,
+                    confidence: imported ? 0.98 : instanceMethod ? 0.94 : 0.95,
+                    resolution_method: imported ? imported.method : instanceMethod?.method || 'ast_same_file_or_name'
+                });
+            }
+        } else if (node.type === 'jsx_self_closing_element' || node.type === 'jsx_opening_element') {
+            const componentName = extractJsxComponentName(node);
+            const caller = findContainingSymbol(symbols, node.startPosition.row + 1);
+            if (componentName && caller && componentName !== caller.name) {
+                const imported = resolveImportedTarget({ localName: componentName }, imports);
+                calls.push({
+                    caller_symbol_id: caller.id,
+                    target_name: imported?.name || componentName,
                     target_file_path: imported?.filePath,
                     file_path: filePath,
                     line: node.startPosition.row + 1,
-                    confidence: imported ? 0.98 : 0.95,
-                    resolution_method: imported ? imported.method : 'ast_same_file_or_name'
+                    confidence: imported ? 0.97 : 0.93,
+                    resolution_method: 'ast_jsx_component_usage'
                 });
             }
         }
@@ -112,6 +132,8 @@ type ImportMap = {
     namespaces: Map<string, string>;
 };
 
+type ObjectTypeMap = Map<string, { className: string; filePath: string }>;
+
 type PythonImportMap = {
     named: Map<string, ImportedBinding>;
     modules: Map<string, string>;
@@ -161,6 +183,12 @@ function extractPythonCallee(node: Parser.SyntaxNode): Callee | null {
     return lastIdentifier?.text ? { localName: lastIdentifier.text } : null;
 }
 
+function extractJsxComponentName(node: Parser.SyntaxNode) {
+    const nameNode = node.namedChild(0);
+    if (!nameNode || nameNode.type !== 'identifier') return null;
+    return /^[A-Z]/.test(nameNode.text) ? nameNode.text : null;
+}
+
 function findLastIdentifier(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
     let match: Parser.SyntaxNode | null = node.type === 'identifier' || node.type === 'property_identifier' ? node : null;
     for (let i = 0; i < node.childCount; i++) {
@@ -168,6 +196,71 @@ function findLastIdentifier(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
         if (childMatch) match = childMatch;
     }
     return match;
+}
+
+function extractObjectTypes(root: Parser.SyntaxNode, filePath: string, imports: ImportMap): ObjectTypeMap {
+    const objectTypes: ObjectTypeMap = new Map();
+
+    function traverse(node: Parser.SyntaxNode) {
+        if (node.type === 'variable_declarator') {
+            const nameNode = node.childForFieldName('name') || node.namedChild(0);
+            const typeName = readTypeAnnotationName(node);
+            const valueNode = node.childForFieldName('value') || node.namedChild(node.namedChildCount - 1);
+            const constructor = valueNode?.type === 'new_expression' ? extractCallee(valueNode) : null;
+            const className = constructor?.localName || typeName;
+            if (nameNode?.type === 'identifier' && className) {
+                const resolved = resolveClassTarget(className, filePath, imports);
+                objectTypes.set(nameNode.text, resolved);
+            }
+        }
+
+        for (let i = 0; i < node.namedChildCount; i++) {
+            traverse(node.namedChild(i));
+        }
+    }
+
+    traverse(root);
+    return objectTypes;
+}
+
+function resolveClassTarget(className: string, filePath: string, imports: ImportMap) {
+    const binding = imports.named.get(className);
+    if (binding) {
+        const resolved = resolveThroughBarrel(binding.importedName, binding.sourceFilePath);
+        return { className: resolved.name, filePath: resolved.filePath };
+    }
+    return { className, filePath };
+}
+
+function resolveInstanceMethod(callee: Callee, objectTypes: ObjectTypeMap) {
+    if (!callee.memberName) return null;
+    const objectType = objectTypes.get(callee.localName);
+    if (!objectType) return null;
+    return {
+        name: callee.memberName,
+        filePath: objectType.filePath,
+        method: 'ast_instance_method'
+    };
+}
+
+function readTypeAnnotationName(node: Parser.SyntaxNode) {
+    for (let i = 0; i < node.namedChildCount; i++) {
+        const child = node.namedChild(i);
+        if (child.type === 'type_annotation') {
+            const identifier = findTypeIdentifier(child);
+            return identifier?.text || null;
+        }
+    }
+    return null;
+}
+
+function findTypeIdentifier(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
+    if (node.type === 'type_identifier' || node.type === 'identifier') return node;
+    for (let i = 0; i < node.namedChildCount; i++) {
+        const match = findTypeIdentifier(node.namedChild(i));
+        if (match) return match;
+    }
+    return null;
 }
 
 function resolveImportedTarget(callee: Callee, imports: ImportMap) {

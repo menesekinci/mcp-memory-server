@@ -4,7 +4,7 @@
 
 Symbol-aware MCP memory server for Codex and coding agents.
 
-It indexes TypeScript, TSX, JavaScript, JSX, and Python projects with tree-sitter, stores symbol metadata in SQLite, and exposes compact MCP tools for low-token project discovery. The current implementation is TS/JS-first for caller precision; Python supports symbol discovery, same-file calls, relative/module import calls, package `__init__.py` re-exports, `self.method()` calls, and simple constructor-assigned instance method calls.
+It indexes TypeScript, TSX, JavaScript, JSX, and Python projects with tree-sitter, stores symbol metadata in SQLite, and exposes compact MCP tools for low-token project discovery. The current implementation is TS/JS-first for caller precision, including imports, barrel re-exports, simple instance method calls, and TSX/JSX component usage. Python supports symbol discovery, same-file calls, relative/module import calls, package `__init__.py` re-exports, `self.method()` calls, and simple constructor-assigned instance method calls.
 
 ## Why
 
@@ -22,17 +22,17 @@ Agents often spend a lot of tokens finding the right file or function before rea
 Current benchmark task: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=3957
+classic_tokens=4140
 mcp_tokens=45
 savings=98.9%
-smaller_output=87.9x
+smaller_output=92.0x
 ```
 
 Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
 
 See [docs/benchmarks.md](docs/benchmarks.md) for benchmark scope and output files.
 
-The benchmark suite also includes real task-shaped checks such as bug-fix root symbol selection, refactor impact analysis, regression narrowing, PR risk summaries, noisy bug investigation narrowing, AST caller precision, incremental Git reindexing, language-depth coverage, and synthetic 10k-symbol scale smoke.
+The benchmark suite also includes real task-shaped checks such as bug-fix root symbol selection, refactor impact analysis, regression narrowing, PR risk summaries, noisy bug investigation narrowing, AST caller precision, TSX component usage, incremental Git reindexing, language-depth coverage, and synthetic 10k-symbol scale smoke.
 
 ## Quick Start
 

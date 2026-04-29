@@ -241,6 +241,66 @@ export function shadowedCheckout() {
     }
 }
 
+async function benchmarkTsxComponentAndInstanceResolution(): Promise<BenchmarkResult> {
+    const projectPath = createTempDir('mcp-memory-benchmark-tsx-graph');
+    const projectId = 'benchmark-tsx-graph';
+    const serviceFile = path.join(projectPath, 'src', 'service.ts');
+    const buttonFile = path.join(projectPath, 'src', 'button.tsx');
+    const appFile = path.join(projectPath, 'src', 'app.tsx');
+
+    writeFile(serviceFile, `
+export class PriceService {
+  total() {
+    return 100;
+  }
+}
+`);
+    writeFile(buttonFile, `
+export function CheckoutButton() {
+  return null;
+}
+`);
+    writeFile(appFile, `
+import { CheckoutButton } from "./button";
+import { PriceService } from "./service";
+
+export function App() {
+  const service = new PriceService();
+  return <CheckoutButton total={service.total()} />;
+}
+`);
+
+    const runtime = await withRuntime(projectPath, projectId);
+    const watcher = runtime.startIndexer(projectPath, projectId);
+    try {
+        await waitFor(() => {
+            const methodTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'total', serviceFile);
+            const componentTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'CheckoutButton', buttonFile);
+            return Boolean(methodTarget && componentTarget);
+        });
+
+        const methodTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'total', serviceFile) as { id: string };
+        const componentTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'CheckoutButton', buttonFile) as { id: string };
+        const methodPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: methodTarget.id, min_confidence: 0.0 })).content[0].text);
+        const componentPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: componentTarget.id, min_confidence: 0.0 })).content[0].text);
+        const methodCallers = methodPayload.definite_callers.map((caller: any) => `${caller.qualified_name}:${caller.resolution_method}`);
+        const componentCallers = componentPayload.definite_callers.map((caller: any) => `${caller.qualified_name}:${caller.resolution_method}`);
+
+        return {
+            name: 'tsx_component_and_instance_graph',
+            notes: `Instance method callers: ${methodCallers.join(', ') || 'none'}; component callers: ${componentCallers.join(', ') || 'none'}.`,
+            passed: methodCallers.includes('App:ast_instance_method')
+                && componentCallers.includes('App:ast_jsx_component_usage')
+        };
+    } finally {
+        await watcher.close();
+    }
+}
+
 async function benchmarkIncrementalReindex(): Promise<BenchmarkResult> {
     const projectPath = createTempDir('mcp-memory-benchmark-incremental');
     const projectId = 'benchmark-incremental';
@@ -906,6 +966,7 @@ async function main() {
         await benchmarkSymbolDiscovery(),
         await benchmarkAstCallers(),
         await benchmarkAstImportResolverPrecision(),
+        await benchmarkTsxComponentAndInstanceResolution(),
         await benchmarkIncrementalReindex(),
         await benchmarkLanguageDepth(),
         await benchmarkBugFixInvestigationNarrowing(),

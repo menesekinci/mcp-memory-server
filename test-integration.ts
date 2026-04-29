@@ -547,6 +547,9 @@ async function testAstCallGraph(db: TestDb, startIndexer: (projectPath: string, 
     const mathFile = path.join(projectPath, 'src', 'math.ts');
     const barrelFile = path.join(projectPath, 'src', 'index.ts');
     const otherFile = path.join(projectPath, 'src', 'other.ts');
+    const serviceFile = path.join(projectPath, 'src', 'service.ts');
+    const buttonFile = path.join(projectPath, 'src', 'button.tsx');
+    const appFile = path.join(projectPath, 'src', 'app.tsx');
 
     writeFile(filePath, `
 import { calculateTotal } from "./index";
@@ -584,6 +587,27 @@ export function calculateTotal() {
 `);
     writeFile(barrelFile, 'export { calculateTotal } from "./math";\n');
     writeFile(otherFile, 'export function calculateTotal() { return 200; }\n');
+    writeFile(serviceFile, `
+export class PriceService {
+  total() {
+    return 100;
+  }
+}
+`);
+    writeFile(buttonFile, `
+export function CheckoutButton() {
+  return null;
+}
+`);
+    writeFile(appFile, `
+import { CheckoutButton } from "./button";
+import { PriceService } from "./service";
+
+export function App() {
+  const service = new PriceService();
+  return <CheckoutButton total={service.total()} />;
+}
+`);
 
     const watcher = startIndexer(projectPath, projectId);
     try {
@@ -631,6 +655,24 @@ export function calculateTotal() {
             min_confidence: 0.0
         }));
         assert(otherCallers.definite_callers.some(c => c.qualified_name === 'otherCheckout'), 'aliased direct import should resolve to its source file');
+
+        const methodTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'total', serviceFile) as { id: string } | undefined;
+        assert(methodTarget, 'TypeScript class method target should be indexed');
+        const methodCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: methodTarget.id,
+            min_confidence: 0.0
+        }));
+        assert(methodCallers.definite_callers.some(c => c.qualified_name === 'App' && c.resolution_method === 'ast_instance_method'), 'constructor-assigned TypeScript instance methods should resolve to the class file');
+
+        const componentTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'CheckoutButton', buttonFile) as { id: string } | undefined;
+        assert(componentTarget, 'TSX component target should be indexed');
+        const componentCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: componentTarget.id,
+            min_confidence: 0.0
+        }));
+        assert(componentCallers.definite_callers.some(c => c.qualified_name === 'App' && c.resolution_method === 'ast_jsx_component_usage'), 'TSX component usage should be exposed as a caller edge');
     } finally {
         await watcher.close();
     }

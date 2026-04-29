@@ -56,6 +56,8 @@ TypeScript and JavaScript caller extraction currently supports:
 - Namespace imports.
 - Barrel/re-export resolution.
 - Local shadowing checks.
+- Simple constructor-assigned or type-annotated instance method calls.
+- TSX/JSX component usage edges for uppercase component tags.
 
 Fuzzy matching remains as a lower-confidence fallback.
 

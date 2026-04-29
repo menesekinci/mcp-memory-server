@@ -270,6 +270,7 @@ async function benchmarkLanguageDepth(): Promise<BenchmarkResult> {
     const pyFile = path.join(projectPath, 'src', 'cart.py');
     const pyPricingFile = path.join(projectPath, 'src', 'pricing.py');
     const pyMoneyFile = path.join(projectPath, 'src', 'billing', 'money.py');
+    const pyInitFile = path.join(projectPath, 'src', '__init__.py');
 
     writeFile(jsFile, `
 export const calculateTotal = () => 100;
@@ -280,13 +281,20 @@ export function checkout() {
     writeFile(pyPricingFile, `
 def calculate_external_total():
     return 200
+
+class PriceCalculator:
+    def total(self, value):
+        return value
 `);
+    writeFile(pyInitFile, 'from .pricing import calculate_external_total as exported_total\n');
     writeFile(pyMoneyFile, `
 def round_money(value):
     return value
 `);
     writeFile(pyFile, `
 from .pricing import calculate_external_total as external_total
+from .pricing import PriceCalculator as Calculator
+from . import exported_total
 import billing.money as money
 
 def calculate_total():
@@ -300,6 +308,13 @@ def checkout_external_py():
 
 def checkout_module_py():
     return money.round_money(10)
+
+def checkout_reexport_py():
+    return exported_total()
+
+def checkout_instance_py():
+    calculator = Calculator()
+    return calculator.total(10)
 `);
 
     const runtime = await withRuntime(projectPath, projectId);
@@ -314,7 +329,9 @@ def checkout_module_py():
               .get(projectId, 'calculate_external_total', pyPricingFile);
             const pyModuleTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'round_money', pyMoneyFile);
-            return Boolean(jsTarget && pyTarget && pyExternalTarget && pyModuleTarget);
+            const pyInstanceTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'total', pyPricingFile);
+            return Boolean(jsTarget && pyTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget);
         });
 
         const jsTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -325,22 +342,28 @@ def checkout_module_py():
           .get(projectId, 'calculate_external_total', pyPricingFile) as { id: string };
         const pyModuleTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'round_money', pyMoneyFile) as { id: string };
+        const pyInstanceTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'total', pyPricingFile) as { id: string };
         const jsPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: jsTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyExternalPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyExternalTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyModulePayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyModuleTarget.id, min_confidence: 0.0 })).content[0].text);
+        const pyInstancePayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyInstanceTarget.id, min_confidence: 0.0 })).content[0].text);
         const jsCallers = jsPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyCallers = pyPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyExternalCallers = pyExternalPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyModuleCallers = pyModulePayload.definite_callers.map((caller: any) => caller.qualified_name);
+        const pyInstanceCallers = pyInstancePayload.definite_callers.map((caller: any) => caller.qualified_name);
 
         return {
             name: 'language_depth_js_python_callers',
-            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python from-import: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}.`,
+            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python from/re-export: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}; Python instance-method: ${pyInstanceCallers.join(', ') || 'none'}.`,
             passed: jsCallers.includes('checkout')
                 && pyCallers.includes('checkout_py')
                 && pyExternalCallers.includes('checkout_external_py')
+                && pyExternalCallers.includes('checkout_reexport_py')
                 && pyModuleCallers.includes('checkout_module_py')
+                && pyInstanceCallers.includes('checkout_instance_py')
         };
     } finally {
         await watcher.close();

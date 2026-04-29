@@ -72,7 +72,7 @@ This roadmap keeps the project focused. Each phase should improve either measure
 - [x] Deepen Python caller extraction with relative from-import aliases.
 - [x] Deepen Python caller extraction with module import aliases.
 - [x] Add Python `self.method()` caller extraction.
-- [ ] Add Python package `__init__.py` re-export handling.
-- [ ] Add Python class/instance method resolution beyond `self`.
+- [x] Add Python package `__init__.py` re-export handling.
+- [x] Add Python simple constructor-assigned instance method resolution beyond `self`.
 - [ ] Add TypeScript compiler API based type-aware resolution.
 - [ ] Add TSX/JSX component usage graph.

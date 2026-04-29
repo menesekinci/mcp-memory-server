@@ -57,6 +57,7 @@ export function extractCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[
 function extractPythonCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[], filePath: string): CallReference[] {
     const calls: CallReference[] = [];
     const imports = extractPythonImports(tree.rootNode, filePath);
+    const objectTypes = extractPythonObjectTypes(tree.rootNode, filePath, imports);
 
     function traverse(node: Parser.SyntaxNode) {
         if (node.type === 'call') {
@@ -65,14 +66,17 @@ function extractPythonCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[]
             if (callee && caller && (callee.memberName || callee.localName) !== caller.name) {
                 const imported = resolvePythonImportedTarget(callee, imports);
                 const selfMethod = callee.localName === 'self' && callee.memberName;
+                const instanceMethod = !imported && !selfMethod && callee.memberName
+                    ? resolvePythonInstanceMethod(callee, objectTypes)
+                    : null;
                 calls.push({
                     caller_symbol_id: caller.id,
-                    target_name: imported?.name || callee.memberName || callee.localName,
-                    target_file_path: imported?.filePath,
+                    target_name: imported?.name || instanceMethod?.name || callee.memberName || callee.localName,
+                    target_file_path: imported?.filePath || instanceMethod?.filePath,
                     file_path: filePath,
                     line: node.startPosition.row + 1,
-                    confidence: imported ? 0.95 : selfMethod ? 0.92 : 0.9,
-                    resolution_method: imported?.method || (selfMethod ? 'ast_python_self_method' : 'ast_python_name')
+                    confidence: imported ? 0.95 : instanceMethod ? 0.93 : selfMethod ? 0.92 : 0.9,
+                    resolution_method: imported?.method || instanceMethod?.method || (selfMethod ? 'ast_python_self_method' : 'ast_python_name')
                 });
             }
         }
@@ -112,6 +116,8 @@ type PythonImportMap = {
     named: Map<string, ImportedBinding>;
     modules: Map<string, string>;
 };
+
+type PythonObjectTypeMap = Map<string, { className: string; filePath: string }>;
 
 function extractCallee(node: Parser.SyntaxNode): Callee | null {
     const functionNode = node.childForFieldName('function') || node.namedChild(0);
@@ -269,21 +275,93 @@ function readPythonImportedModule(node: Parser.SyntaxNode, filePath: string, imp
 
 function resolvePythonImportedTarget(callee: Callee, imports: PythonImportMap) {
     if (callee.memberName && imports.modules.has(callee.localName)) {
+        const resolved = resolvePythonExportedTarget(callee.memberName, imports.modules.get(callee.localName)!);
         return {
-            name: callee.memberName,
-            filePath: imports.modules.get(callee.localName)!,
-            method: 'ast_python_module_import'
+            name: resolved.name,
+            filePath: resolved.filePath,
+            method: resolved.method === 'ast_python_name' ? 'ast_python_module_import' : resolved.method
         };
     }
 
     const binding = imports.named.get(callee.localName);
     if (!binding || callee.memberName) return null;
 
+    const resolved = resolvePythonExportedTarget(binding.importedName, binding.sourceFilePath);
     return {
-        name: binding.importedName,
-        filePath: binding.sourceFilePath,
-        method: binding.method
+        name: resolved.name,
+        filePath: resolved.filePath,
+        method: resolved.method === 'ast_python_name' ? binding.method : resolved.method
     };
+}
+
+function extractPythonObjectTypes(root: Parser.SyntaxNode, filePath: string, imports: PythonImportMap): PythonObjectTypeMap {
+    const objectTypes: PythonObjectTypeMap = new Map();
+
+    function traverse(node: Parser.SyntaxNode) {
+        if (node.type === 'assignment') {
+            const left = node.namedChild(0);
+            const right = node.namedChild(1);
+            const constructor = right?.type === 'call' ? extractPythonCallee(right) : null;
+            if (left?.type === 'identifier' && constructor && !constructor.memberName) {
+                const imported = imports.named.get(constructor.localName);
+                objectTypes.set(left.text, {
+                    className: imported?.importedName || constructor.localName,
+                    filePath: imported ? resolvePythonExportedTarget(imported.importedName, imported.sourceFilePath).filePath : filePath
+                });
+            }
+        }
+
+        for (let i = 0; i < node.namedChildCount; i++) {
+            traverse(node.namedChild(i));
+        }
+    }
+
+    traverse(root);
+    return objectTypes;
+}
+
+function resolvePythonInstanceMethod(callee: Callee, objectTypes: PythonObjectTypeMap) {
+    if (!callee.memberName) return null;
+    const objectType = objectTypes.get(callee.localName);
+    if (!objectType) return null;
+    return {
+        name: callee.memberName,
+        filePath: objectType.filePath,
+        method: 'ast_python_instance_method'
+    };
+}
+
+function resolvePythonExportedTarget(importedName: string, sourceFilePath: string, seen = new Set<string>()): { name: string; filePath: string; method: string } {
+    if (seen.has(sourceFilePath) || !fs.existsSync(sourceFilePath)) {
+        return { name: importedName, filePath: sourceFilePath, method: 'ast_python_name' };
+    }
+    seen.add(sourceFilePath);
+
+    const content = fs.readFileSync(sourceFilePath, 'utf8');
+    const reexport = findPythonReexport(content, sourceFilePath, importedName);
+    if (reexport) {
+        return resolvePythonExportedTarget(reexport.importedName, reexport.sourceFilePath, seen);
+    }
+
+    return { name: importedName, filePath: sourceFilePath, method: 'ast_python_name' };
+}
+
+function findPythonReexport(content: string, filePath: string, exportedName: string) {
+    const fromImport = /from\s+([.\w]+)\s+import\s+([^\n]+)/g;
+    let match: RegExpExecArray | null;
+    while ((match = fromImport.exec(content))) {
+        const sourceFilePath = resolvePythonModuleFile(filePath, match[1]);
+        if (!sourceFilePath) continue;
+        for (const rawPart of match[2].split(',')) {
+            const part = rawPart.trim();
+            if (!part || part === '*') continue;
+            const [imported, exported] = part.split(/\s+as\s+/).map(value => value.trim());
+            if ((exported || imported) === exportedName) {
+                return { importedName: imported, sourceFilePath };
+            }
+        }
+    }
+    return null;
 }
 
 function readImportClause(node: Parser.SyntaxNode, sourceFilePath: string, imports: ImportMap) {

@@ -643,6 +643,7 @@ async function testLanguageDepth(db: TestDb, startIndexer: (projectPath: string,
     const pyFile = path.join(projectPath, 'src', 'cart.py');
     const pyPricingFile = path.join(projectPath, 'src', 'pricing.py');
     const pyMoneyFile = path.join(projectPath, 'src', 'billing', 'money.py');
+    const pyInitFile = path.join(projectPath, 'src', '__init__.py');
 
     writeFile(jsFile, `
 export const calculateTotal = () => 100;
@@ -668,13 +669,20 @@ def mention_only_py():
     writeFile(pyPricingFile, `
 def calculate_external_total():
     return 200
+
+class PriceCalculator:
+    def total(self, value):
+        return value
 `);
+    writeFile(pyInitFile, 'from .pricing import calculate_external_total as exported_total\n');
     writeFile(pyMoneyFile, `
 def round_money(value):
     return value
 `);
     writeFile(pyFile, `
 from .pricing import calculate_external_total as external_total
+from .pricing import PriceCalculator as Calculator
+from . import exported_total
 import billing.money as money
 
 def calculate_total():
@@ -688,6 +696,13 @@ def checkout_external_py():
 
 def checkout_module_py():
     return money.round_money(10)
+
+def checkout_reexport_py():
+    return exported_total()
+
+def checkout_instance_py():
+    calculator = Calculator()
+    return calculator.total(10)
 
 class PriceCalculator:
     def normalize(self, value):
@@ -711,7 +726,9 @@ def mention_only_py():
               .get(projectId, 'calculate_external_total', pyPricingFile);
             const pyModuleTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'round_money', pyMoneyFile);
-            return Boolean(jsTarget && pyTarget && pyExternalTarget && pyModuleTarget);
+            const pyInstanceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'total', pyPricingFile);
+            return Boolean(jsTarget && pyTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget);
         });
 
         const jsTarget = db.prepare("SELECT id, language FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -743,6 +760,7 @@ def mention_only_py():
             min_confidence: 0.0
         }));
         assert(pyExternalCallers.definite_callers.some(c => c.qualified_name === 'checkout_external_py' && c.resolution_method === 'ast_python_from_import'), 'Python from-import aliases should resolve cross-file callers');
+        assert(pyExternalCallers.definite_callers.some(c => c.qualified_name === 'checkout_reexport_py' && c.resolution_method === 'ast_python_from_import'), 'Python __init__.py re-exports should resolve cross-file callers');
 
         const pyModuleTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'round_money', pyMoneyFile) as { id: string } | undefined;
@@ -759,6 +777,14 @@ def mention_only_py():
             min_confidence: 0.0
         }));
         assert(pyMethodCallers.definite_callers.some(c => c.qualified_name === 'total' && c.resolution_method === 'ast_python_self_method'), 'Python self.method calls should resolve same-file method callers');
+
+        const pyInstanceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'total', pyPricingFile) as { id: string } | undefined;
+        const pyInstanceCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: pyInstanceTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(pyInstanceCallers.definite_callers.some(c => c.qualified_name === 'checkout_instance_py' && c.resolution_method === 'ast_python_instance_method'), 'Python constructor-assigned object method calls should resolve cross-file method callers');
     } finally {
         await watcher.close();
     }

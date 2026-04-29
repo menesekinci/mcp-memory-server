@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-04-29T13:27:56.955Z",
+  "generated_at": "2026-04-29T13:45:48.300Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
-      "classic_chars": 15456,
-      "classic_tokens": 3864,
+      "classic_chars": 15828,
+      "classic_tokens": 3957,
       "mcp_chars": 180,
       "mcp_tokens": 45,
-      "token_savings_pct": 98.8,
+      "token_savings_pct": 98.9,
       "notes": "Find the callTool symbol with broad text search versus compact MCP symbol search.",
       "passed": true
     },
@@ -28,7 +28,7 @@
     },
     {
       "name": "language_depth_js_python_callers",
-      "notes": "JavaScript callers: checkout; Python same-file: checkout_py; Python from-import: checkout_external_py; Python module-import: checkout_module_py.",
+      "notes": "JavaScript callers: checkout; Python same-file: checkout_py; Python from/re-export: checkout_external_py, checkout_reexport_py; Python module-import: checkout_module_py; Python instance-method: checkout_instance_py.",
       "passed": true
     },
     {
@@ -78,7 +78,7 @@
     },
     {
       "name": "performance_scale_10k_symbols",
-      "notes": "Cold index: 4777ms for 1000 files/10001 symbols; search: 3.6ms; caller: 2ms; incremental: 118.3ms for 1 changed file; risk: 1107ms for 26 changed files; db: 7.3MB.",
+      "notes": "Cold index: 4315ms for 1000 files/10001 symbols; search: 4ms; caller: 2.4ms; incremental: 154.5ms for 1 changed file; risk: 1191ms for 26 changed files; db: 7.3MB.",
       "passed": true
     }
   ]

@@ -22,7 +22,7 @@ The project is not meant to replace source inspection. It is meant to make the d
 - The package is at v0.2.0.
 - Phase 0-6 are complete: published core, benchmarks, TS/JS call graph, Git-aware incremental indexing, docs/adoption, language depth, and plugin polish.
 - The active direction is v0.3 real-world validation.
-- TS/JS caller precision is the strongest path. Python is supported but shallower and currently focuses on same-file AST call references.
+- TS/JS caller precision is the strongest path. Python is supported with symbol discovery, same-file calls, relative/module imports, package re-exports, `self.method()`, and simple constructor-assigned instance method calls.
 
 ## Memory MCP Usage
 
@@ -97,6 +97,7 @@ No active v0.3 validation items remain. Add new items here only when a concrete 
 - NPX runtime smoke is now covered by `npm run smoke:npx`, which packs the project, launches `codex-mcp-memory-server` through `npx -p`, waits for the stdio server ready log, and shuts it down.
 - Performance and scale validation now runs as `performance_scale_10k_symbols`, covering cold indexing for 1k files/10k symbols, search latency, caller latency, incremental reindex, database growth, and broad changed-symbol risk latency.
 - Dogfooding findings were recorded in `docs/dogfooding.md`, and release steps were moved into `docs/release.md` so v0.3 validation tracking stays complete but readable.
+- Python language depth now covers package `__init__.py` re-export chains and simple constructor-assigned instance method calls, with integration and benchmark coverage added so `find_callers` can resolve practical Python package call paths beyond same-file references.
 
 ## Verification
 

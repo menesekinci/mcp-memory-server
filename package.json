@@ -1,6 +1,6 @@
 {
   "name": "codex-mcp-memory-server",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Symbol-aware MCP memory server for Codex and coding agents",
   "main": "dist/src/index.js",
   "bin": {

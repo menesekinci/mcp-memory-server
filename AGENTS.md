@@ -111,6 +111,7 @@ When an item is completed, move its concrete result into Completed Validation No
 - Monorepo performance validation now includes `performance_monorepo_workspace`, a synthetic 20-package workspace benchmark covering cold indexing, symbol search, caller lookup, incremental reindex, changed-symbol risk, database growth, and ignored generated output.
 - Git risk tests now cover `changed_symbols_risk` deleted-symbol visibility, including the default hidden behavior and `include_deleted` opt-in.
 - Ubuntu CI coverage now waits for every AST call-graph fixture symbol before assertions, removing a platform-specific watcher ordering race where imported targets could be checked before indexing finished.
+- Benchmark CI now uses a longer symbol-index wait window so slower macOS runners do not fail benchmark scenarios before watcher-driven indexing completes.
 
 ## Verification
 

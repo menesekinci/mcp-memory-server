@@ -27,7 +27,7 @@ function writeFile(filePath: string, content: string) {
     fs.writeFileSync(filePath, content);
 }
 
-async function waitFor(condition: () => boolean, timeoutMs = 5000) {
+async function waitFor(condition: () => boolean, timeoutMs = 15000) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
         if (condition()) return;

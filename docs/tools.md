@@ -39,7 +39,7 @@ Discovery tools return compact results by default. Use `get_symbol_body` only af
 
 | Tool | Purpose |
 | --- | --- |
-| `save_message` | Store a conversation message and link mentioned symbols. |
+| `save_message` | Store a conversation message and link mentioned symbols. Auto-creates a project session when `session_id` is omitted or unknown. |
 | `search_history` | Full-text search saved messages. |
 | `save_decision` | Store a project decision and link symbols. |
 | `get_decisions` | Read saved decisions, optionally filtered by symbol/status. |
@@ -55,4 +55,3 @@ search_symbols -> get_symbol_body -> find_callers -> get_decisions
 ```
 
 Use normal shell commands for docs, config, JSON, CSS, fixtures, and broad non-symbol text.
-

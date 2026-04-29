@@ -23,11 +23,11 @@ npm pack --dry-run
 1. Commit the release changes.
 2. Push to `master`.
 3. Confirm GitHub Actions CI passes on Windows, Ubuntu, and macOS.
-4. Create a Git tag for the version, for example:
+4. Create a Git tag for the version, matching `package.json`, for example:
 
 ```powershell
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.4.2
+git push origin v0.4.2
 ```
 
 5. Create a GitHub release with concise notes:

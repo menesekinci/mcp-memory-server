@@ -17,6 +17,7 @@ export function initDb() {
     db.exec(`
         CREATE TABLE IF NOT EXISTS symbols (
             id TEXT PRIMARY KEY,
+            ref TEXT,
             project_id TEXT NOT NULL,
             name TEXT NOT NULL,
             qualified_name TEXT NOT NULL,
@@ -132,6 +133,7 @@ export function initDb() {
         CREATE INDEX IF NOT EXISTS idx_symbols_project ON symbols(project_id);
         CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
         CREATE INDEX IF NOT EXISTS idx_symbols_project_name ON symbols(project_id, name);
+        CREATE INDEX IF NOT EXISTS idx_symbols_project_qualified ON symbols(project_id, qualified_name);
         CREATE INDEX IF NOT EXISTS idx_files_project_path ON files(project_id, path);
         CREATE INDEX IF NOT EXISTS idx_history_symbol ON symbol_history(symbol_id);
         CREATE INDEX IF NOT EXISTS idx_history_commit ON symbol_history(commit_sha);
@@ -142,6 +144,7 @@ export function initDb() {
 
     ensureColumn('symbols', 'commit_sha', 'TEXT');
     ensureColumn('symbols', 'is_deleted', 'INTEGER DEFAULT 0');
+    ensureColumn('symbols', 'ref', 'TEXT');
     ensureColumn('symbol_history', 'branch', 'TEXT');
     ensureColumn('symbol_history', 'pr_reference', 'TEXT');
     ensureColumn('files', 'git_blob_sha', 'TEXT');
@@ -151,6 +154,10 @@ export function initDb() {
     ensureColumn('project_decisions', 'superseded_by', 'TEXT REFERENCES project_decisions(id)');
     ensureColumn('project_decisions', 'confidence', 'REAL DEFAULT 1.0');
     ensureColumn('symbol_calls', 'target_file_path', 'TEXT');
+
+    db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_symbols_project_ref ON symbols(project_id, ref);
+    `);
 }
 
 function ensureColumn(tableName: string, columnName: string, definition: string) {

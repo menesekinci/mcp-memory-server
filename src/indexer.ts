@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import db from './db';
 import { extractCallReferences } from './call-graph';
+import { symbolRef } from './refs';
 
 const LANGUAGES = {
     '.ts': { language: (TypeScript as any).typescript, name: 'typescript' },
@@ -144,9 +145,10 @@ export async function indexFile(filePath: string, projectId = 'default', options
             : [];
 
         const upsertSymbol = db.prepare(`
-            INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            INSERT INTO symbols (id, ref, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
             ON CONFLICT(id) DO UPDATE SET
+                ref=excluded.ref,
                 name=excluded.name,
                 qualified_name=excluded.qualified_name,
                 kind=excluded.kind,
@@ -167,11 +169,17 @@ export async function indexFile(filePath: string, projectId = 'default', options
             db.prepare("UPDATE symbols SET is_deleted = 1, updated_at = ? WHERE project_id = ? AND file_path = ?")
               .run(now, projectId, filePath);
             for (const s of symbolsToSave) {
-                upsertSymbol.run(s.id, s.project_id, s.name, s.qualified_name, s.kind, s.file_path, s.start_line, s.end_line, s.signature, s.body, s.language, s.updated_at);
+                upsertSymbol.run(s.id, s.ref, s.project_id, s.name, s.qualified_name, s.kind, s.file_path, s.start_line, s.end_line, s.signature, s.body, s.language, s.updated_at);
             }
             db.prepare("DELETE FROM symbol_calls WHERE project_id = ? AND file_path = ?").run(projectId, filePath);
             for (const call of callsToSave) {
-                const target = call.target_file_path
+                const target = call.target_qualified_name && call.target_file_path
+                    ? db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0 LIMIT 1")
+                      .get(projectId, call.target_qualified_name, call.target_file_path) as { id: string } | undefined
+                    : call.target_qualified_name
+                    ? db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND is_deleted = 0 LIMIT 1")
+                      .get(projectId, call.target_qualified_name) as { id: string } | undefined
+                    : call.target_file_path
                     ? db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0 LIMIT 1")
                       .get(projectId, call.target_name, call.target_file_path) as { id: string } | undefined
                     : db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0 LIMIT 1")
@@ -366,21 +374,22 @@ function gitRenamedFiles(projectPath: string) {
 }
 
 function migrateRenamedFile(projectId: string, oldPath: string, newPath: string) {
-    const oldSymbols = db.prepare("SELECT id, kind, name FROM symbols WHERE project_id = ? AND file_path = ?")
-      .all(projectId, oldPath) as Array<{ id: string; kind: string; name: string }>;
+    const oldSymbols = db.prepare("SELECT id, kind, name, qualified_name FROM symbols WHERE project_id = ? AND file_path = ?")
+      .all(projectId, oldPath) as Array<{ id: string; kind: string; name: string; qualified_name: string }>;
     if (oldSymbols.length === 0) return 0;
 
     const now = Date.now();
     const transaction = db.transaction(() => {
         for (const symbol of oldSymbols) {
-            const newId = `${projectId}:${newPath}:${symbol.kind}:${symbol.name}`;
+            const newId = `${projectId}:${newPath}:${symbol.kind}:${symbol.qualified_name || symbol.name}`;
+            const ref = symbolRef(newId);
             const existing = db.prepare("SELECT id FROM symbols WHERE id = ?").get(newId) as { id: string } | undefined;
             if (!existing) {
                 db.prepare(`
-                    INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, commit_sha, updated_at, is_deleted)
-                    SELECT ?, project_id, name, qualified_name, kind, ?, start_line, end_line, signature, body, language, commit_sha, ?, 0
+                    INSERT INTO symbols (id, ref, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, commit_sha, updated_at, is_deleted)
+                    SELECT ?, ?, project_id, name, qualified_name, kind, ?, start_line, end_line, signature, body, language, commit_sha, ?, 0
                     FROM symbols WHERE id = ?
-                `).run(newId, newPath, now, symbol.id);
+                `).run(newId, ref, newPath, now, symbol.id);
             }
             db.prepare("UPDATE message_symbol_references SET symbol_id = ? WHERE symbol_id = ?").run(newId, symbol.id);
             db.prepare("UPDATE decision_symbol_references SET symbol_id = ? WHERE symbol_id = ?").run(newId, symbol.id);
@@ -412,8 +421,9 @@ function migrateRenamedFile(projectId: string, oldPath: string, newPath: string)
 function extractSymbols(tree: Parser.Tree, content: string, filePath: string, language: string, projectId = 'default') {
     const symbols: any[] = [];
     
-    function traverse(node: Parser.SyntaxNode) {
+    function traverse(node: Parser.SyntaxNode, scope: string[] = []) {
         let symbol = null;
+        let pushesScope = false;
 
         if (language === 'typescript' || language === 'javascript') {
             if (node.type === 'function_declaration') {
@@ -439,6 +449,7 @@ function extractSymbols(tree: Parser.Tree, content: string, filePath: string, la
                         signature: `class ${nameNode.text}`,
                         body: node.text
                     };
+                    pushesScope = true;
                 }
             } else if (node.type === 'method_definition') {
                 const nameNode = node.childForFieldName('name');
@@ -490,25 +501,32 @@ function extractSymbols(tree: Parser.Tree, content: string, filePath: string, la
                         signature: `class ${nameNode.text}`,
                         body: node.text
                     };
+                    pushesScope = true;
                 }
             }
         }
 
+        let childScope = scope;
         if (symbol) {
-            const id = `${projectId}:${filePath}:${symbol.kind}:${symbol.name}`;
+            const qualifiedName = scope.length > 0 ? `${scope.join('.')}.${symbol.name}` : symbol.name;
+            const id = `${projectId}:${filePath}:${symbol.kind}:${qualifiedName}`;
             symbols.push({
                 id,
+                ref: symbolRef(id),
                 project_id: projectId,
                 ...symbol,
-                qualified_name: symbol.name,
+                qualified_name: qualifiedName,
                 file_path: filePath,
                 language,
                 updated_at: Date.now()
             });
+            if (pushesScope) {
+                childScope = [...scope, symbol.name];
+            }
         }
 
         for (let i = 0; i < node.childCount; i++) {
-            traverse(node.child(i));
+            traverse(node.child(i), childScope);
         }
     }
 

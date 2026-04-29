@@ -6,15 +6,17 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import db from "./db";
 import { v4 as uuidv4 } from 'uuid';
-import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { resolveSymbolReferences } from "./symbol-resolver";
 import { CountRow, DecisionRow, MessageRow, SessionRow, SymbolReference, SymbolRow } from "./types";
 import { listChangedSourceFiles, reindexChangedFiles, reconcileProjectFiles } from "./indexer";
+import { symbolRef } from "./refs";
 
 const server = new Server(
   {
     name: "mcp-memory-server",
-    version: "1.0.0",
+    version: packageVersion(),
   },
   {
     capabilities: {
@@ -153,16 +155,17 @@ export async function listTools() {
       },
       {
         name: "save_message",
-        description: "Save a conversation message and link it to mentioned symbols",
+        description: "Save a conversation message and link it to mentioned symbols. Creates a session automatically when session_id is omitted or unknown.",
         inputSchema: {
           type: "object",
           properties: {
             session_id: { type: "string" },
+            project_id: { type: "string", default: "default" },
             role: { type: "string", enum: ["user", "agent"] },
             content: { type: "string" },
             explicit_symbols: { type: "array", items: { type: "string" } }
           },
-          required: ["session_id", "role", "content"],
+          required: ["role", "content"],
         },
       },
       {
@@ -469,10 +472,19 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
     const { session_id, role, content, explicit_symbols = [] } = args;
     const messageId = uuidv4();
     const now = Date.now();
-    const session = db.prepare("SELECT project_id FROM sessions WHERE id = ?").get(session_id) as { project_id: string } | undefined;
+    const requestedSessionId = typeof session_id === 'string' && session_id.length > 0 ? session_id : undefined;
+    const session = requestedSessionId
+      ? db.prepare("SELECT project_id FROM sessions WHERE id = ?").get(requestedSessionId) as { project_id: string } | undefined
+      : undefined;
     const projectId = args.project_id || session?.project_id || 'default';
+    const resolvedSessionId = requestedSessionId || uuidv4();
 
-    db.prepare("INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)").run(messageId, session_id, role, content, now);
+    if (!session) {
+      db.prepare("INSERT INTO sessions (id, project_id, started_at, ended_at, title, tags) VALUES (?, ?, ?, NULL, ?, ?)")
+        .run(resolvedSessionId, projectId, now, 'auto-created', 'auto');
+    }
+
+    db.prepare("INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)").run(messageId, resolvedSessionId, role, content, now);
 
     const references = await resolveSymbolReferences(content, explicit_symbols, projectId) as SymbolReference[];
     
@@ -488,7 +500,7 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
     db.prepare("INSERT INTO messages_fts(rowid, content) VALUES (?, ?)").run(messageRow.rowid, content);
 
     return {
-      content: [{ type: "text", text: `Message saved. Extracted ${references.length} symbol references.` }],
+      content: [{ type: "text", text: `Message saved in session ${resolvedSessionId}. Extracted ${references.length} symbol references.` }],
     };
   }
 
@@ -608,7 +620,7 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
     }
 
     const lastEndedAt = lastSession.ended_at || Date.now();
-    const changedSymbols = db.prepare("SELECT id, name, updated_at FROM symbols WHERE project_id = ? AND updated_at > ?").all(project_id, lastEndedAt) as SymbolRow[];
+    const changedSymbols = db.prepare("SELECT id, name, qualified_name, updated_at FROM symbols WHERE project_id = ? AND updated_at > ?").all(project_id, lastEndedAt) as SymbolRow[];
     
     const activeDecisions = db.prepare("SELECT id, summary FROM project_decisions WHERE project_id = ? AND status = 'active'").all(project_id) as DecisionRow[];
 
@@ -617,7 +629,7 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
           last_session_at: lastEndedAt,
           changed_symbols: changedSymbols.map(s => ({
               symbol_id: s.id,
-              qualified_name: s.name,
+              qualified_name: s.qualified_name,
               updated_at: s.updated_at
           })),
           active_decisions: activeDecisions.map(d => ({
@@ -655,9 +667,10 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
 }
 
 function formatSymbol(symbol: SymbolRow, options: { includeBody: boolean; verbose: boolean }) {
+  const ref = symbol.ref || symbolRef(symbol.id);
   if (!options.verbose) {
     return {
-      ref: symbolRef(symbol.id),
+      ref,
       name: symbol.name,
       kind: symbol.kind,
       file: relativeDisplayPath(symbol.file_path),
@@ -667,7 +680,7 @@ function formatSymbol(symbol: SymbolRow, options: { includeBody: boolean; verbos
   }
 
   return {
-    ref: symbolRef(symbol.id),
+    ref,
     id: symbol.id,
     project_id: symbol.project_id,
     name: symbol.name,
@@ -683,14 +696,18 @@ function formatSymbol(symbol: SymbolRow, options: { includeBody: boolean; verbos
   };
 }
 
-function symbolRef(symbolId: string) {
-  return crypto.createHash('sha1').update(symbolId).digest('hex').slice(0, 10);
-}
-
 function resolveSymbolIdFromRef(ref: string | undefined, projectId: string) {
   if (!ref) return undefined;
+  const indexed = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND ref = ? AND is_deleted = 0 LIMIT 1")
+    .get(projectId, ref) as Pick<SymbolRow, 'id'> | undefined;
+  if (indexed) return indexed.id;
+
   const symbols = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND is_deleted = 0").all(projectId) as Pick<SymbolRow, 'id'>[];
-  return symbols.find(symbol => symbolRef(symbol.id) === ref)?.id;
+  const legacy = symbols.find(symbol => symbolRef(symbol.id) === ref);
+  if (legacy) {
+    db.prepare("UPDATE symbols SET ref = ? WHERE id = ? AND (ref IS NULL OR ref = '')").run(ref, legacy.id);
+  }
+  return legacy?.id;
 }
 
 function relativeDisplayPath(filePath: string) {
@@ -708,6 +725,22 @@ function compactSignature(signature: string | null) {
   if (!signature) return null;
   const normalized = signature.replace(/\s+/g, ' ').trim();
   return normalized.length > 80 ? `${normalized.slice(0, 77)}...` : normalized;
+}
+
+function packageVersion() {
+  const candidates = [
+    path.resolve(__dirname, '..', 'package.json'),
+    path.resolve(__dirname, '..', '..', 'package.json')
+  ];
+  for (const candidate of candidates) {
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(candidate, 'utf8')) as { version?: string };
+      if (packageJson.version) return packageJson.version;
+    } catch {
+      // Runtime can be launched from source or dist; try the next likely package path.
+    }
+  }
+  return process.env.npm_package_version || '0.0.0';
 }
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {

@@ -26,7 +26,7 @@ MCP client
 
 | Table | Purpose |
 | --- | --- |
-| `symbols` | Current symbol metadata and bodies. |
+| `symbols` | Current symbol metadata, compact refs, scoped qualified names, and bodies. |
 | `symbol_calls` | Caller/callee edges with confidence and resolution method. |
 | `symbol_history` | Git-derived symbol versions. |
 | `files` | Indexed files, blob hashes, exclusion status. |
@@ -45,6 +45,12 @@ git ls-files --others --exclude-standard
 ```
 
 Rename reconciliation uses Git rename detection and preserves symbol links across moved files. Full reconciliation also scans supported source files and compares blob hashes, so clean branch checkout or rewrite states can update same-path symbol bodies even when `git diff HEAD` is empty.
+
+Indexed symbol IDs include project, file, kind, and scoped `qualified_name`. This keeps same-file same-name class methods such as `UserService.run` and `BillingService.run` distinct. Compact refs are stored in SQLite and indexed by `(project_id, ref)` so body lookup can resolve refs directly, with a legacy hash fallback for older rows.
+
+## Session Memory
+
+`save_message` writes to `messages` and `messages_fts`, then links explicit and inferred symbols through `message_symbol_references`. If callers omit `session_id`, or pass an unknown session ID, the server creates a session in the target project before inserting the message. Agents should still pass stable session IDs for long work sessions when they want future context to group cleanly.
 
 ## Caller Graph
 

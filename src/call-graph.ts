@@ -6,6 +6,7 @@ import ts from 'typescript';
 export type CallReference = {
     caller_symbol_id: string;
     target_name: string;
+    target_qualified_name?: string;
     target_file_path?: string;
     file_path: string;
     line: number;
@@ -16,6 +17,7 @@ export type CallReference = {
 type IndexedSymbol = {
     id: string;
     name: string;
+    qualified_name?: string;
     start_line: number;
     end_line: number;
 };
@@ -42,6 +44,7 @@ export function extractCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[
                 calls.push({
                     caller_symbol_id: caller.id,
                     target_name: imported?.name || instanceMethod?.name || callee.memberName || callee.localName,
+                    target_qualified_name: instanceMethod?.qualifiedName,
                     target_file_path: imported?.filePath || instanceMethod?.filePath,
                     file_path: filePath,
                     line: node.startPosition.row + 1,
@@ -93,9 +96,11 @@ function extractPythonCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[]
                 const instanceMethod = !imported && !selfMethod && callee.memberName
                     ? resolvePythonInstanceMethod(callee, objectTypes)
                     : null;
+                const selfQualifiedName = selfMethod ? scopedMemberName(caller.qualified_name, callee.memberName) : undefined;
                 calls.push({
                     caller_symbol_id: caller.id,
                     target_name: imported?.name || instanceMethod?.name || callee.memberName || callee.localName,
+                    target_qualified_name: instanceMethod?.qualifiedName || selfQualifiedName,
                     target_file_path: imported?.filePath || instanceMethod?.filePath,
                     file_path: filePath,
                     line: node.startPosition.row + 1,
@@ -118,6 +123,11 @@ function findContainingSymbol(symbols: IndexedSymbol[], line: number) {
     return symbols
         .filter(symbol => symbol.start_line <= line && symbol.end_line >= line)
         .sort((a, b) => (a.end_line - a.start_line) - (b.end_line - b.start_line))[0];
+}
+
+function scopedMemberName(qualifiedName: string | undefined, memberName: string | undefined) {
+    if (!qualifiedName || !memberName || !qualifiedName.includes('.')) return undefined;
+    return `${qualifiedName.split('.').slice(0, -1).join('.')}.${memberName}`;
 }
 
 type Callee = {
@@ -242,6 +252,7 @@ function resolveInstanceMethod(callee: Callee, objectTypes: ObjectTypeMap) {
     if (!objectType) return null;
     return {
         name: callee.memberName,
+        qualifiedName: `${objectType.className}.${callee.memberName}`,
         filePath: objectType.filePath,
         method: 'ast_instance_method'
     };
@@ -403,6 +414,7 @@ function mergeCallReferences(calls: CallReference[]) {
     for (const call of calls) {
         const key = [
             call.caller_symbol_id,
+            call.target_qualified_name || '',
             call.target_name,
             call.target_file_path || '',
             call.file_path,
@@ -550,6 +562,7 @@ function resolvePythonInstanceMethod(callee: Callee, objectTypes: PythonObjectTy
     if (!objectType) return null;
     return {
         name: callee.memberName,
+        qualifiedName: `${objectType.className}.${callee.memberName}`,
         filePath: objectType.filePath,
         method: 'ast_python_instance_method'
     };

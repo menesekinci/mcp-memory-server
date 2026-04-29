@@ -19,10 +19,28 @@ The project is not meant to replace source inspection. It is meant to make the d
 
 ## Current Product Positioning
 
-- The package is at v0.3.0.
+- The package is at v0.4.2.
 - Phase 0-6 are complete: published core, benchmarks, TS/JS call graph, Git-aware incremental indexing, docs/adoption, language depth, and plugin polish.
-- The active direction is v0.3 real-world validation.
+- v0.3 real-world validation has been completed and folded into the current hardening baseline.
+- The active direction is v0.4.x / v1.0 hardening: real-repository validation, stronger tool contracts, performance stability, setup verification, and release discipline.
 - TS/JS caller precision is the strongest path, including import/barrel resolution, selective TypeScript compiler API symbol resolution, simple instance method calls, and TSX/JSX component usage. Python is supported with symbol discovery, same-file calls, relative/module imports, package re-exports, `self.method()`, and simple constructor-assigned instance method calls.
+
+## Source of Truth
+
+- Package and release version: `package.json`.
+- MCP tool contracts: `src/server.ts`.
+- SQLite schema and migrations: `src/db.ts`.
+- Indexing and Git reconciliation behavior: `src/indexer.ts`.
+- Call graph behavior: `src/call-graph.ts`.
+- Architecture overview: `docs/architecture.md`.
+- Release process: `docs/release.md`.
+
+## Known Sharp Edges
+
+- Secret filtering is best-effort. Do not index repositories containing embedded credentials unless body storage and scan behavior are acceptable for that environment.
+- Compact refs are now stored and indexed in SQLite, with a legacy hash fallback for older rows.
+- `save_message` auto-creates a session when none is provided, but durable project memory is still better when agents pass a stable session ID for a real work session.
+- Symbol identity is class/module scoped for indexed symbols, but semantic caller disambiguation should still be treated with confidence scores when same-name methods exist in complex dynamic patterns.
 
 ## Memory MCP Usage
 
@@ -112,6 +130,7 @@ When an item is completed, move its concrete result into Completed Validation No
 - Git risk tests now cover `changed_symbols_risk` deleted-symbol visibility, including the default hidden behavior and `include_deleted` opt-in.
 - Ubuntu CI coverage now waits for every AST call-graph fixture symbol before assertions, removing a platform-specific watcher ordering race where imported targets could be checked before indexing finished.
 - Benchmark CI now uses a longer symbol-index wait window so slower macOS runners do not fail benchmark scenarios before watcher-driven indexing completes.
+- v0.4.2 hardening corrected AGENTS/README version drift, made MCP server metadata read from `package.json`, added auto-created sessions for `save_message`, stores compact refs in SQLite for indexed lookups, and scopes symbol identity by qualified name so same-file same-name methods do not overwrite each other.
 
 ## Verification
 

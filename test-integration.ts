@@ -96,6 +96,9 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
     for (const expected of ['search_symbols', 'lookup_symbol', 'get_symbol_body', 'find_callers', 'reindex_changed_files', 'reconcile_index', 'changed_symbols_risk']) {
         assert(toolNames.includes(expected), `listTools should expose ${expected}`);
     }
+    const saveMessageTool = tools.tools.find((tool: any) => tool.name === 'save_message');
+    assert(saveMessageTool.inputSchema.required.includes('role') && saveMessageTool.inputSchema.required.includes('content'), 'save_message should require role and content');
+    assert(!saveMessageTool.inputSchema.required.includes('session_id'), 'save_message should not require a pre-created session');
 
     const saved = await callTool('save_message', {
         session_id: sessionId,
@@ -104,6 +107,17 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
         explicit_symbols: ['calculateTotal']
     });
     assert(saved.content[0].text.includes('Extracted 1 symbol references'), 'save_message did not link the explicit symbol');
+
+    const autoSessionSaved = await callTool('save_message', {
+        project_id: projectId,
+        role: 'agent',
+        content: 'Auto-created session note with autoSessionSearchTerm.',
+        explicit_symbols: []
+    });
+    assert(autoSessionSaved.content[0].text.includes('Message saved in session'), 'save_message should report the resolved session');
+    const autoSession = db.prepare("SELECT s.id FROM sessions s JOIN messages m ON m.session_id = s.id WHERE s.project_id = ? AND m.content LIKE ?")
+      .get(projectId, '%autoSessionSearchTerm%') as { id: string } | undefined;
+    assert(autoSession?.id, 'save_message should auto-create a valid session when session_id is omitted');
 
     const lookup = parseToolJson<any[]>(await callTool('lookup_symbol', {
         project_id: projectId,
@@ -174,6 +188,11 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
         query: 'uniqueSearchTerm'
     }));
     assert(searchResults.length === 1, 'search_history should return the saved message in the same project');
+    const autoSessionResults = parseToolJson<any[]>(await callTool('search_history', {
+        project_id: projectId,
+        query: 'autoSessionSearchTerm'
+    }));
+    assert(autoSessionResults.length === 1, 'search_history should return messages saved through auto-created sessions');
 
     const callers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
         symbol_id: symbolId,
@@ -509,7 +528,7 @@ const { initDb, default: db } = require('./src/db');
 initDb();
 initDb();
 const requiredColumns = {
-  symbols: ['commit_sha', 'is_deleted'],
+  symbols: ['commit_sha', 'is_deleted', 'ref'],
   symbol_history: ['branch', 'pr_reference'],
   files: ['git_blob_sha', 'is_excluded'],
   sessions: ['title', 'tags'],
@@ -566,6 +585,36 @@ async function testIndexerEdges(db: TestDb, startIndexer: (projectPath: string, 
               .get(projectA, 'calculateTotal');
             return Boolean(row);
         });
+
+        const scopedFile = path.join(projectPath, 'src', 'services.ts');
+        writeFile(scopedFile, `
+export class UserService {
+  run() {
+    return "user";
+  }
+}
+
+export class BillingService {
+  run() {
+    return "billing";
+  }
+}
+`);
+        await waitFor(() => {
+            const row = db.prepare("SELECT COUNT(*) as count FROM symbols WHERE project_id = ? AND file_path = ? AND kind = ? AND name = ? AND is_deleted = 0")
+              .get(projectA, scopedFile, 'method', 'run') as { count: number };
+            return row.count === 2;
+        });
+        const scopedMethods = db.prepare("SELECT id, qualified_name, ref FROM symbols WHERE project_id = ? AND file_path = ? AND kind = ? AND name = ? AND is_deleted = 0 ORDER BY qualified_name")
+          .all(projectA, scopedFile, 'method', 'run') as Array<{ id: string; qualified_name: string; ref: string | null }>;
+        assert(scopedMethods.map(row => row.qualified_name).join(',') === 'BillingService.run,UserService.run', 'same-name methods should keep class-scoped qualified names');
+        assert(new Set(scopedMethods.map(row => row.id)).size === 2, 'same-name methods in one file should have distinct symbol IDs');
+        assert(scopedMethods.every(row => row.ref && row.ref.length === 10), 'indexed symbols should store compact refs');
+        const scopedBody = parseToolJson<any>(await callTool('get_symbol_body', {
+            project_id: projectA,
+            ref: scopedMethods[0].ref
+        }));
+        assert(scopedBody.qualified_name === 'BillingService.run' && scopedBody.body.includes('billing'), 'get_symbol_body should resolve indexed refs without scanning all symbols');
 
         const projectBResult = parseToolJson<any[]>(await callTool('lookup_symbol', {
             project_id: projectB,
@@ -866,7 +915,7 @@ def mention_only_py():
             symbol_id: pyMethodTarget?.id,
             min_confidence: 0.0
         }));
-        assert(pyMethodCallers.definite_callers.some(c => c.qualified_name === 'total' && c.resolution_method === 'ast_python_self_method'), 'Python self.method calls should resolve same-file method callers');
+        assert(pyMethodCallers.definite_callers.some(c => c.qualified_name === 'PriceCalculator.total' && c.resolution_method === 'ast_python_self_method'), 'Python self.method calls should resolve same-file method callers');
 
         const pyInstanceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'total', pyPricingFile) as { id: string } | undefined;

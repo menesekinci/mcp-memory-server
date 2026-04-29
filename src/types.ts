@@ -1,5 +1,6 @@
 export type SymbolRow = {
     id: string;
+    ref: string | null;
     project_id: string;
     name: string;
     qualified_name: string;

@@ -147,4 +147,4 @@ npm publish --access public
 - Compact outputs intentionally omit full code bodies to reduce token use during discovery.
 - Full source remains available through `get_symbol_body`.
 - `find_callers` returns AST definite callers and fuzzy probable callers.
-- v0.3 development is focused on real-repository validation: stronger edge-case tests, task-shaped benchmarks, and dogfooding before adding broad new feature surfaces.
+- v0.4.x development is focused on v1.0 hardening: real-repository validation, stronger tool contracts, performance stability, setup verification, and release discipline.

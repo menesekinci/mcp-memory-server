@@ -58,6 +58,9 @@ TypeScript and JavaScript caller extraction currently supports:
 - Local shadowing checks.
 - Simple constructor-assigned or type-annotated instance method calls.
 - TSX/JSX component usage edges for uppercase component tags.
+- Selective TypeScript compiler API resolution for imported symbols, JSX components, and typed/member calls.
+
+The TypeScript compiler API path is gated to files that need semantic resolution, such as files with imports, TSX/JSX, or member calls. Plain same-file function-heavy files stay on the tree-sitter fast path, which keeps large synthetic indexing benchmarks practical.
 
 Fuzzy matching remains as a lower-confidence fallback.
 

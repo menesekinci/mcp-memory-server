@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-29T13:51:25.682Z",
+  "generated_at": "2026-04-29T13:59:11.418Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
@@ -23,7 +23,7 @@
     },
     {
       "name": "tsx_component_and_instance_graph",
-      "notes": "Instance method callers: App:ast_instance_method; component callers: App:ast_jsx_component_usage.",
+      "notes": "Instance method callers: App:ts_checker_symbol; component callers: App:ts_checker_jsx_component.",
       "passed": true
     },
     {
@@ -83,7 +83,7 @@
     },
     {
       "name": "performance_scale_10k_symbols",
-      "notes": "Cold index: 4785ms for 1000 files/10001 symbols; search: 3.7ms; caller: 2.5ms; incremental: 125.9ms for 1 changed file; risk: 1203.2ms for 26 changed files; db: 7.3MB.",
+      "notes": "Cold index: 4597ms for 1000 files/10001 symbols; search: 3.6ms; caller: 1.9ms; incremental: 117.8ms for 1 changed file; risk: 1121.7ms for 26 changed files; db: 7.3MB.",
       "passed": true
     }
   ]

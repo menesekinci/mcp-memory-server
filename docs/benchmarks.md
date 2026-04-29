@@ -20,7 +20,7 @@ benchmark/results/latest.md
 | `symbol_discovery_callTool` | Classic broad text search versus compact MCP symbol discovery. |
 | `ast_callers_vs_fuzzy_fallback` | AST definite caller detection versus fuzzy probable caller fallback. |
 | `ast_import_resolver_precision` | Import/barrel resolver precision with same-name and local-shadowing checks. |
-| `tsx_component_and_instance_graph` | TSX component usage and simple TypeScript instance method caller extraction. |
+| `tsx_component_and_instance_graph` | TypeScript compiler API resolution for TSX component usage and function-return-typed instance method caller extraction. |
 | `incremental_changed_file_reindex` | Git changed-file reindexing with blob hashes. |
 | `language_depth_js_python_callers` | JavaScript symbol extraction plus Python same-file, from-import, re-export, module-import, and simple instance-method caller extraction. |
 | `bugfix_investigation_narrowing` | Noisy bug-fix discovery using compact symbols, conversation history, and decisions instead of broad text output. |
@@ -50,7 +50,7 @@ The suite now includes task-shaped checks beyond raw output size:
 
 - Bug fix investigation narrowing and root symbol selection.
 - Refactor impact analysis through `find_callers`.
-- TSX component usage and simple TypeScript instance method caller extraction.
+- TypeScript compiler API checks for TSX component usage and function-return-typed instance method caller extraction.
 - Regression candidate narrowing through recent symbol and decision context.
 - PR risk summary through changed symbols and linked decisions.
 - Discovery workload comparison by files read, bodies read, token size, and false positives.

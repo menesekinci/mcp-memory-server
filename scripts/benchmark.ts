@@ -254,6 +254,10 @@ export class PriceService {
     return 100;
   }
 }
+
+export function createService(): PriceService {
+  return new PriceService();
+}
 `);
     writeFile(buttonFile, `
 export function CheckoutButton() {
@@ -262,10 +266,10 @@ export function CheckoutButton() {
 `);
     writeFile(appFile, `
 import { CheckoutButton } from "./button";
-import { PriceService } from "./service";
+import { createService } from "./service";
 
 export function App() {
-  const service = new PriceService();
+  const service = createService();
   return <CheckoutButton total={service.total()} />;
 }
 `);
@@ -293,8 +297,8 @@ export function App() {
         return {
             name: 'tsx_component_and_instance_graph',
             notes: `Instance method callers: ${methodCallers.join(', ') || 'none'}; component callers: ${componentCallers.join(', ') || 'none'}.`,
-            passed: methodCallers.includes('App:ast_instance_method')
-                && componentCallers.includes('App:ast_jsx_component_usage')
+            passed: methodCallers.includes('App:ts_checker_symbol')
+                && componentCallers.includes('App:ts_checker_jsx_component')
         };
     } finally {
         await watcher.close();

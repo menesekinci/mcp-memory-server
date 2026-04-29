@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import Parser from 'tree-sitter';
+import ts from 'typescript';
 
 export type CallReference = {
     caller_symbol_id: string;
@@ -71,7 +72,10 @@ export function extractCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[
     }
 
     traverse(tree.rootNode);
-    return calls;
+    const checkerCalls = language === 'typescript'
+        ? extractTypeScriptCheckerReferences(filePath, symbols)
+        : [];
+    return mergeCallReferences([...calls, ...checkerCalls]);
 }
 
 function extractPythonCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[], filePath: string): CallReference[] {
@@ -283,6 +287,133 @@ function resolveImportedTarget(callee: Callee, imports: ImportMap) {
         filePath: resolved.filePath,
         method: resolved.method === 'ast_static_import' ? binding.method : resolved.method
     };
+}
+
+function extractTypeScriptCheckerReferences(filePath: string, symbols: IndexedSymbol[]): CallReference[] {
+    if (!/\.(ts|tsx)$/.test(filePath) || !fs.existsSync(filePath)) return [];
+    const content = fs.readFileSync(filePath, 'utf8');
+    if (!shouldUseTypeScriptChecker(filePath, content)) return [];
+
+    const options = readTypeScriptCompilerOptions(filePath);
+    const program = ts.createProgram([filePath], {
+        ...options,
+        allowJs: true,
+        checkJs: false,
+        noEmit: true,
+        skipLibCheck: true
+    });
+    const sourceFile = program.getSourceFile(filePath);
+    if (!sourceFile) return [];
+
+    const checker = program.getTypeChecker();
+    const calls: CallReference[] = [];
+
+    function pushReference(node: ts.Node, targetNode: ts.Node, method: string, confidence: number) {
+        const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+        const caller = findContainingSymbol(symbols, line);
+        if (!caller) return;
+        const target = resolveTypeScriptSymbolTarget(checker, targetNode);
+        if (!target || target.name === caller.name) return;
+        calls.push({
+            caller_symbol_id: caller.id,
+            target_name: target.name,
+            target_file_path: target.filePath,
+            file_path: filePath,
+            line,
+            confidence,
+            resolution_method: method
+        });
+    }
+
+    function visit(node: ts.Node) {
+        if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+            pushReference(node, node.expression, 'ts_checker_symbol', 0.99);
+        } else if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+            pushReference(node, node.tagName, 'ts_checker_jsx_component', 0.985);
+        }
+        ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
+    return calls;
+}
+
+function shouldUseTypeScriptChecker(filePath: string, content: string) {
+    return filePath.endsWith('.tsx')
+        || /\bimport\b|\bexport\s+.*\s+from\b/.test(content)
+        || /<[A-Z][A-Za-z0-9_.]*(\s|>|\/>)/.test(content)
+        || /\.[A-Za-z_$][\w$]*\s*\(/.test(content);
+}
+
+function readTypeScriptCompilerOptions(filePath: string): ts.CompilerOptions {
+    const tsconfig = ts.findConfigFile(path.dirname(filePath), ts.sys.fileExists, 'tsconfig.json');
+    if (!tsconfig) {
+        return {
+            target: ts.ScriptTarget.ES2022,
+            module: ts.ModuleKind.CommonJS,
+            moduleResolution: ts.ModuleResolutionKind.Node10,
+            jsx: ts.JsxEmit.ReactJSX,
+            esModuleInterop: true
+        };
+    }
+
+    const config = ts.readConfigFile(tsconfig, ts.sys.readFile);
+    if (config.error) return {};
+    const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, path.dirname(tsconfig));
+    return parsed.options;
+}
+
+function resolveTypeScriptSymbolTarget(checker: ts.TypeChecker, node: ts.Node) {
+    const symbol = resolveAliasedSymbol(checker, checker.getSymbolAtLocation(node));
+    if (!symbol) return null;
+    const declaration = symbol.valueDeclaration || symbol.declarations?.[0];
+    if (!declaration) return null;
+    const sourceFile = declaration.getSourceFile();
+    if (sourceFile.isDeclarationFile) return null;
+    const name = declarationName(declaration) || symbol.getName();
+    if (!name || name === '__function' || name === 'prototype') return null;
+    return {
+        name,
+        filePath: path.resolve(sourceFile.fileName)
+    };
+}
+
+function resolveAliasedSymbol(checker: ts.TypeChecker, symbol: ts.Symbol | undefined) {
+    if (!symbol) return null;
+    if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+        try {
+            return checker.getAliasedSymbol(symbol);
+        } catch {
+            return symbol;
+        }
+    }
+    return symbol;
+}
+
+function declarationName(declaration: ts.Declaration) {
+    const named = declaration as ts.Declaration & { name?: ts.PropertyName | ts.BindingName };
+    if (!named.name) return null;
+    return ts.isIdentifier(named.name) || ts.isStringLiteral(named.name) || ts.isNumericLiteral(named.name)
+        ? named.name.text
+        : null;
+}
+
+function mergeCallReferences(calls: CallReference[]) {
+    const merged = new Map<string, CallReference>();
+    for (const call of calls) {
+        const key = [
+            call.caller_symbol_id,
+            call.target_name,
+            call.target_file_path || '',
+            call.file_path,
+            call.line
+        ].join('\0');
+        const existing = merged.get(key);
+        if (!existing || call.confidence > existing.confidence) {
+            merged.set(key, call);
+        }
+    }
+    return [...merged.values()];
 }
 
 function extractImports(root: Parser.SyntaxNode, filePath: string): ImportMap {

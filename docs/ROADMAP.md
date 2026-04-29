@@ -76,4 +76,4 @@ This roadmap keeps the project focused. Each phase should improve either measure
 - [x] Add Python simple constructor-assigned instance method resolution beyond `self`.
 - [x] Add lightweight TypeScript constructor/type-annotation instance method resolution.
 - [x] Add TSX/JSX component usage graph.
-- [ ] Add TypeScript compiler API based type-aware resolution.
+- [x] Add TypeScript compiler API based type-aware resolution.

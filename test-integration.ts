@@ -593,6 +593,10 @@ export class PriceService {
     return 100;
   }
 }
+
+export function createService(): PriceService {
+  return new PriceService();
+}
 `);
     writeFile(buttonFile, `
 export function CheckoutButton() {
@@ -601,10 +605,10 @@ export function CheckoutButton() {
 `);
     writeFile(appFile, `
 import { CheckoutButton } from "./button";
-import { PriceService } from "./service";
+import { createService } from "./service";
 
 export function App() {
-  const service = new PriceService();
+  const service = createService();
   return <CheckoutButton total={service.total()} />;
 }
 `);
@@ -632,7 +636,7 @@ export function App() {
             min_confidence: 0.0
         }));
 
-        assert(callers.definite_callers.some(c => c.qualified_name === 'sameFileCheckout' && c.resolution_method === 'ast_same_file_or_name'), 'AST call graph should mark same-file calls as definite callers');
+        assert(callers.definite_callers.some(c => c.qualified_name === 'sameFileCheckout' && c.resolution_method === 'ts_checker_symbol'), 'TypeScript checker should mark same-file calls as definite callers');
         assert(callers.probable_callers.some(c => c.qualified_name === 'mentionOnly'), 'fuzzy fallback should keep mention-only matches as probable callers');
 
         const importedTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -643,7 +647,7 @@ export function App() {
             symbol_id: importedTarget.id,
             min_confidence: 0.0
         }));
-        assert(importedCallers.definite_callers.some(c => c.qualified_name === 'checkout' && c.resolution_method === 'ast_static_import'), 'barrel import should resolve to the original exported file');
+        assert(importedCallers.definite_callers.some(c => c.qualified_name === 'checkout' && c.resolution_method === 'ts_checker_symbol'), 'TypeScript checker should resolve barrel imports to the original exported file');
         assert(!importedCallers.definite_callers.some(c => c.qualified_name === 'shadowedCheckout'), 'local shadowing should prevent imported AST caller edges');
         assert(!importedCallers.definite_callers.some(c => c.qualified_name === 'otherCheckout'), 'same-name imports from other files should not point to the wrong target');
 
@@ -663,7 +667,7 @@ export function App() {
             symbol_id: methodTarget.id,
             min_confidence: 0.0
         }));
-        assert(methodCallers.definite_callers.some(c => c.qualified_name === 'App' && c.resolution_method === 'ast_instance_method'), 'constructor-assigned TypeScript instance methods should resolve to the class file');
+        assert(methodCallers.definite_callers.some(c => c.qualified_name === 'App' && c.resolution_method === 'ts_checker_symbol'), 'TypeScript checker should resolve instance methods through function return types');
 
         const componentTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'CheckoutButton', buttonFile) as { id: string } | undefined;
@@ -672,7 +676,7 @@ export function App() {
             symbol_id: componentTarget.id,
             min_confidence: 0.0
         }));
-        assert(componentCallers.definite_callers.some(c => c.qualified_name === 'App' && c.resolution_method === 'ast_jsx_component_usage'), 'TSX component usage should be exposed as a caller edge');
+        assert(componentCallers.definite_callers.some(c => c.qualified_name === 'App' && c.resolution_method === 'ts_checker_jsx_component'), 'TypeScript checker should expose TSX component usage as a caller edge');
     } finally {
         await watcher.close();
     }

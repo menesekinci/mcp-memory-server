@@ -19,10 +19,10 @@ The project is not meant to replace source inspection. It is meant to make the d
 
 ## Current Product Positioning
 
-- The package is at v0.2.0.
+- The package is at v0.3.0.
 - Phase 0-6 are complete: published core, benchmarks, TS/JS call graph, Git-aware incremental indexing, docs/adoption, language depth, and plugin polish.
 - The active direction is v0.3 real-world validation.
-- TS/JS caller precision is the strongest path, including import/barrel resolution, simple instance method calls, and TSX/JSX component usage. Python is supported with symbol discovery, same-file calls, relative/module imports, package re-exports, `self.method()`, and simple constructor-assigned instance method calls.
+- TS/JS caller precision is the strongest path, including import/barrel resolution, selective TypeScript compiler API symbol resolution, simple instance method calls, and TSX/JSX component usage. Python is supported with symbol discovery, same-file calls, relative/module imports, package re-exports, `self.method()`, and simple constructor-assigned instance method calls.
 
 ## Memory MCP Usage
 
@@ -99,6 +99,7 @@ No active v0.3 validation items remain. Add new items here only when a concrete 
 - Dogfooding findings were recorded in `docs/dogfooding.md`, and release steps were moved into `docs/release.md` so v0.3 validation tracking stays complete but readable.
 - Python language depth now covers package `__init__.py` re-export chains and simple constructor-assigned instance method calls, with integration and benchmark coverage added so `find_callers` can resolve practical Python package call paths beyond same-file references.
 - TS/TSX language depth now covers simple constructor/type-annotation instance method calls and TSX/JSX component usage graph edges, with integration and benchmark coverage added so component callers and class-method callers are visible through `find_callers`.
+- TypeScript compiler API resolution now runs selectively for semantic cases such as imported symbols, JSX components, and typed/member calls. This resolves function-return-typed instance method calls while preserving the tree-sitter fast path for plain same-file code so the 10k-symbol scale benchmark remains stable.
 
 ## Verification
 

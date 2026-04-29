@@ -59,4 +59,11 @@ TypeScript and JavaScript caller extraction currently supports:
 
 Fuzzy matching remains as a lower-confidence fallback.
 
-Python caller extraction currently supports same-file name-based calls from Python `call` AST nodes. Fuzzy matching remains available for string-only mentions and broader probable caller fallback.
+Python caller extraction currently supports:
+
+- Same-file name-based calls from Python `call` AST nodes.
+- Relative `from .module import symbol` calls, including aliases.
+- Module imports such as `import package.module as alias` followed by `alias.function()`.
+- Same-file `self.method()` calls.
+
+Fuzzy matching remains available for string-only mentions and broader probable caller fallback.

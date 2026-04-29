@@ -21,7 +21,7 @@ benchmark/results/latest.md
 | `ast_callers_vs_fuzzy_fallback` | AST definite caller detection versus fuzzy probable caller fallback. |
 | `ast_import_resolver_precision` | Import/barrel resolver precision with same-name and local-shadowing checks. |
 | `incremental_changed_file_reindex` | Git changed-file reindexing with blob hashes. |
-| `language_depth_js_python_callers` | JavaScript symbol extraction and Python AST caller extraction. |
+| `language_depth_js_python_callers` | JavaScript symbol extraction plus Python same-file, from-import, and module-import caller extraction. |
 | `bugfix_investigation_narrowing` | Noisy bug-fix discovery using compact symbols, conversation history, and decisions instead of broad text output. |
 | `task_success_bugfix_root_symbol` | Confirms bug-fix discovery selects the correct root symbol, not only a smaller output. |
 | `task_success_refactor_impact` | Confirms `find_callers` returns production refactor impact with low false positives. |
@@ -35,10 +35,10 @@ benchmark/results/latest.md
 The current measured discovery task is: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=3639
+classic_tokens=3864
 mcp_tokens=45
 savings=98.8%
-smaller_output=80.9x
+smaller_output=85.9x
 ```
 
 Token counts are practical estimates using `characters / 4`. The benchmark measures discovery output size, not final answer quality.

@@ -641,6 +641,8 @@ async function testLanguageDepth(db: TestDb, startIndexer: (projectPath: string,
     const projectPath = createTempDir('mcp-memory-language-depth');
     const jsFile = path.join(projectPath, 'src', 'cart.js');
     const pyFile = path.join(projectPath, 'src', 'cart.py');
+    const pyPricingFile = path.join(projectPath, 'src', 'pricing.py');
+    const pyMoneyFile = path.join(projectPath, 'src', 'billing', 'money.py');
 
     writeFile(jsFile, `
 export const calculateTotal = () => 100;
@@ -663,6 +665,40 @@ def checkout_py():
 def mention_only_py():
     return "calculate_total"
 `);
+    writeFile(pyPricingFile, `
+def calculate_external_total():
+    return 200
+`);
+    writeFile(pyMoneyFile, `
+def round_money(value):
+    return value
+`);
+    writeFile(pyFile, `
+from .pricing import calculate_external_total as external_total
+import billing.money as money
+
+def calculate_total():
+    return 100
+
+def checkout_py():
+    return calculate_total()
+
+def checkout_external_py():
+    return external_total()
+
+def checkout_module_py():
+    return money.round_money(10)
+
+class PriceCalculator:
+    def normalize(self, value):
+        return value
+
+    def total(self, value):
+        return self.normalize(value)
+
+def mention_only_py():
+    return "calculate_total"
+`);
 
     const watcher = startIndexer(projectPath, projectId);
     try {
@@ -671,7 +707,11 @@ def mention_only_py():
               .get(projectId, 'calculateTotal', jsFile);
             const pyTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'calculate_total', pyFile);
-            return Boolean(jsTarget && pyTarget);
+            const pyExternalTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'calculate_external_total', pyPricingFile);
+            const pyModuleTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'round_money', pyMoneyFile);
+            return Boolean(jsTarget && pyTarget && pyExternalTarget && pyModuleTarget);
         });
 
         const jsTarget = db.prepare("SELECT id, language FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -695,6 +735,30 @@ def mention_only_py():
         }));
         assert(pyCallers.definite_callers.some(c => c.qualified_name === 'checkout_py' && c.resolution_method === 'ast_python_name'), 'Python callers should be extracted from AST call nodes');
         assert(pyCallers.probable_callers.some(c => c.qualified_name === 'mention_only_py'), 'Python fuzzy fallback should keep string-only mentions as probable');
+
+        const pyExternalTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'calculate_external_total', pyPricingFile) as { id: string } | undefined;
+        const pyExternalCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: pyExternalTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(pyExternalCallers.definite_callers.some(c => c.qualified_name === 'checkout_external_py' && c.resolution_method === 'ast_python_from_import'), 'Python from-import aliases should resolve cross-file callers');
+
+        const pyModuleTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'round_money', pyMoneyFile) as { id: string } | undefined;
+        const pyModuleCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: pyModuleTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(pyModuleCallers.definite_callers.some(c => c.qualified_name === 'checkout_module_py' && c.resolution_method === 'ast_python_module_import'), 'Python module import aliases should resolve cross-file callers');
+
+        const pyMethodTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'normalize', pyFile) as { id: string } | undefined;
+        const pyMethodCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: pyMethodTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(pyMethodCallers.definite_callers.some(c => c.qualified_name === 'total' && c.resolution_method === 'ast_python_self_method'), 'Python self.method calls should resolve same-file method callers');
     } finally {
         await watcher.close();
     }

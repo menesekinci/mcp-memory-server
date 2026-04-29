@@ -56,19 +56,23 @@ export function extractCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[
 
 function extractPythonCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[], filePath: string): CallReference[] {
     const calls: CallReference[] = [];
+    const imports = extractPythonImports(tree.rootNode, filePath);
 
     function traverse(node: Parser.SyntaxNode) {
         if (node.type === 'call') {
-            const callee = extractPythonCalleeName(node);
+            const callee = extractPythonCallee(node);
             const caller = findContainingSymbol(symbols, node.startPosition.row + 1);
-            if (callee && caller && callee !== caller.name) {
+            if (callee && caller && (callee.memberName || callee.localName) !== caller.name) {
+                const imported = resolvePythonImportedTarget(callee, imports);
+                const selfMethod = callee.localName === 'self' && callee.memberName;
                 calls.push({
                     caller_symbol_id: caller.id,
-                    target_name: callee,
+                    target_name: imported?.name || callee.memberName || callee.localName,
+                    target_file_path: imported?.filePath,
                     file_path: filePath,
                     line: node.startPosition.row + 1,
-                    confidence: 0.9,
-                    resolution_method: 'ast_python_name'
+                    confidence: imported ? 0.95 : selfMethod ? 0.92 : 0.9,
+                    resolution_method: imported?.method || (selfMethod ? 'ast_python_self_method' : 'ast_python_name')
                 });
             }
         }
@@ -104,6 +108,11 @@ type ImportMap = {
     namespaces: Map<string, string>;
 };
 
+type PythonImportMap = {
+    named: Map<string, ImportedBinding>;
+    modules: Map<string, string>;
+};
+
 function extractCallee(node: Parser.SyntaxNode): Callee | null {
     const functionNode = node.childForFieldName('function') || node.namedChild(0);
     if (!functionNode) return null;
@@ -129,12 +138,21 @@ function extractCallee(node: Parser.SyntaxNode): Callee | null {
     return lastIdentifier?.text ? { localName: lastIdentifier.text } : null;
 }
 
-function extractPythonCalleeName(node: Parser.SyntaxNode) {
+function extractPythonCallee(node: Parser.SyntaxNode): Callee | null {
     const functionNode = node.childForFieldName('function') || node.namedChild(0);
     if (!functionNode) return null;
-    if (functionNode.type === 'identifier') return functionNode.text;
+    if (functionNode.type === 'identifier') return { localName: functionNode.text };
+    if (functionNode.type === 'attribute') {
+        const identifiers = identifiersOf(functionNode);
+        if (identifiers.length >= 2) {
+            return {
+                localName: identifiers[identifiers.length - 2].text,
+                memberName: identifiers[identifiers.length - 1].text
+            };
+        }
+    }
     const lastIdentifier = findLastIdentifier(functionNode);
-    return lastIdentifier?.text || null;
+    return lastIdentifier?.text ? { localName: lastIdentifier.text } : null;
 }
 
 function findLastIdentifier(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
@@ -194,6 +212,78 @@ function extractImports(root: Parser.SyntaxNode, filePath: string): ImportMap {
 
     traverse(root);
     return imports;
+}
+
+function extractPythonImports(root: Parser.SyntaxNode, filePath: string): PythonImportMap {
+    const imports: PythonImportMap = {
+        named: new Map(),
+        modules: new Map()
+    };
+
+    function traverse(node: Parser.SyntaxNode) {
+        if (node.type === 'import_from_statement') {
+            const moduleNode = node.namedChild(0);
+            const sourceFilePath = resolvePythonModuleFile(filePath, moduleNode?.text || null);
+            if (sourceFilePath) {
+                for (let i = 1; i < node.namedChildCount; i++) {
+                    readPythonImportedName(node.namedChild(i), sourceFilePath, imports);
+                }
+            }
+        } else if (node.type === 'import_statement') {
+            for (let i = 0; i < node.namedChildCount; i++) {
+                readPythonImportedModule(node.namedChild(i), filePath, imports);
+            }
+        }
+
+        for (let i = 0; i < node.namedChildCount; i++) {
+            traverse(node.namedChild(i));
+        }
+    }
+
+    traverse(root);
+    return imports;
+}
+
+function readPythonImportedName(node: Parser.SyntaxNode, sourceFilePath: string, imports: PythonImportMap) {
+    const identifiers = identifiersOf(node);
+    if (identifiers.length === 0) return;
+    const importedName = identifiers[0].text;
+    const localName = identifiers[identifiers.length - 1].text;
+    imports.named.set(localName, {
+        importedName,
+        sourceFilePath,
+        method: 'ast_python_from_import'
+    });
+}
+
+function readPythonImportedModule(node: Parser.SyntaxNode, filePath: string, imports: PythonImportMap) {
+    const sourceFilePath = resolvePythonModuleFile(filePath, node.text.split(/\s+as\s+/)[0].trim());
+    if (!sourceFilePath) return;
+    const identifiers = identifiersOf(node);
+    if (identifiers.length === 0) return;
+    const localName = node.type === 'aliased_import'
+        ? identifiers[identifiers.length - 1].text
+        : identifiers[0].text;
+    imports.modules.set(localName, sourceFilePath);
+}
+
+function resolvePythonImportedTarget(callee: Callee, imports: PythonImportMap) {
+    if (callee.memberName && imports.modules.has(callee.localName)) {
+        return {
+            name: callee.memberName,
+            filePath: imports.modules.get(callee.localName)!,
+            method: 'ast_python_module_import'
+        };
+    }
+
+    const binding = imports.named.get(callee.localName);
+    if (!binding || callee.memberName) return null;
+
+    return {
+        name: binding.importedName,
+        filePath: binding.sourceFilePath,
+        method: binding.method
+    };
 }
 
 function readImportClause(node: Parser.SyntaxNode, sourceFilePath: string, imports: ImportMap) {
@@ -306,6 +396,43 @@ function resolveModuleFile(fromFilePath: string, specifier: string | null) {
         path.join(basePath, 'index.tsx')
     ];
     return candidates.find(candidate => fs.existsSync(candidate) && fs.statSync(candidate).isFile()) || null;
+}
+
+function resolvePythonModuleFile(fromFilePath: string, specifier: string | null) {
+    if (!specifier) return null;
+    const normalized = specifier.trim();
+    const relativePrefix = normalized.match(/^\.+/)?.[0] || '';
+    const moduleName = normalized.slice(relativePrefix.length);
+    const moduleParts = moduleName ? moduleName.split('.').filter(Boolean) : [];
+    const bases: string[] = [];
+
+    if (relativePrefix) {
+        let base = path.dirname(fromFilePath);
+        for (let i = 1; i < relativePrefix.length; i++) {
+            base = path.dirname(base);
+        }
+        bases.push(base);
+    } else {
+        let current = path.dirname(fromFilePath);
+        while (true) {
+            bases.push(current);
+            const parent = path.dirname(current);
+            if (parent === current) break;
+            current = parent;
+        }
+    }
+
+    for (const base of bases) {
+        const modulePath = path.join(base, ...moduleParts);
+        const candidates = [
+            `${modulePath}.py`,
+            path.join(modulePath, '__init__.py')
+        ];
+        const found = candidates.find(candidate => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+        if (found) return found;
+    }
+
+    return null;
 }
 
 function isShadowed(root: Parser.SyntaxNode, caller: IndexedSymbol, localName: string, callStartIndex: number) {

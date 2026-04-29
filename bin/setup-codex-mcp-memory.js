@@ -12,6 +12,7 @@ Options:
   --project-id <id>       Logical project id. Default: basename of project path.
   --db-path <path>        SQLite DB path. Default: ~/.mcp-memory-server/memory.db.
   --name <name>           Codex MCP server name. Default: codex-mcp-memory-server.
+  --verify                Validate paths, command availability, and print the install command.
   --dry-run               Print the codex command without executing it.
   --help                  Show this help.
 `);
@@ -23,6 +24,7 @@ function readArgs(argv) {
     projectId: undefined,
     dbPath: path.join(os.homedir(), '.mcp-memory-server', 'memory.db'),
     name: 'codex-mcp-memory-server',
+    verify: false,
     dryRun: false
   };
 
@@ -33,6 +35,11 @@ function readArgs(argv) {
       process.exit(0);
     }
     if (arg === '--dry-run') {
+      args.dryRun = true;
+      continue;
+    }
+    if (arg === '--verify') {
+      args.verify = true;
       args.dryRun = true;
       continue;
     }
@@ -53,6 +60,41 @@ function quote(value) {
   return /\s/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
 }
 
+function commandExists(command) {
+  const probe = process.platform === 'win32' ? 'where' : 'command';
+  const probeArgs = process.platform === 'win32' ? [command] : ['-v', command];
+  const result = spawnSync(probe, probeArgs, { stdio: 'ignore', shell: process.platform !== 'win32' });
+  return result.status === 0;
+}
+
+function verifySetup(args, renderedCommand) {
+  const checks = [];
+  checks.push({
+    label: 'project path exists',
+    ok: require('fs').existsSync(args.projectPath),
+    detail: args.projectPath
+  });
+
+  const dbDir = path.dirname(args.dbPath);
+  try {
+    require('fs').mkdirSync(dbDir, { recursive: true });
+    require('fs').accessSync(dbDir, require('fs').constants.W_OK);
+    checks.push({ label: 'database directory writable', ok: true, detail: dbDir });
+  } catch (error) {
+    checks.push({ label: 'database directory writable', ok: false, detail: `${dbDir} (${error.message})` });
+  }
+
+  checks.push({ label: 'npx available', ok: commandExists(process.platform === 'win32' ? 'npx.cmd' : 'npx'), detail: 'npx' });
+  checks.push({ label: 'codex available', ok: commandExists(process.platform === 'win32' ? 'codex.cmd' : 'codex'), detail: 'codex' });
+
+  for (const check of checks) {
+    console.log(`${check.ok ? 'ok' : 'fail'} - ${check.label}: ${check.detail}`);
+  }
+  console.log(`install command: ${renderedCommand}`);
+
+  return checks.every(check => check.ok);
+}
+
 try {
   const args = readArgs(process.argv.slice(2));
   const commandArgs = [
@@ -70,9 +112,14 @@ try {
     '-y',
     'codex-mcp-memory-server'
   ];
+  const renderedCommand = ['codex', ...commandArgs].map(quote).join(' ');
+
+  if (args.verify) {
+    process.exit(verifySetup(args, renderedCommand) ? 0 : 1);
+  }
 
   if (args.dryRun) {
-    console.log(['codex', ...commandArgs].map(quote).join(' '));
+    console.log(renderedCommand);
     process.exit(0);
   }
 

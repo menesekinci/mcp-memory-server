@@ -36,6 +36,17 @@ The benchmark suite also includes real task-shaped checks such as bug-fix root s
 
 ## Quick Start
 
+Recommended setup helper:
+
+```powershell
+npx -y -p codex-mcp-memory-server setup-codex-mcp-memory `
+  --project-path "C:\path\to\your\repo" `
+  --project-id "your-project-id" `
+  --verify
+```
+
+Remove `--verify` to register the server after the checks pass.
+
 ```powershell
 codex mcp add codex-mcp-memory-server `
   --env PROJECT_PATH="C:\path\to\your\repo" `

@@ -11,6 +11,14 @@ Check:
 
 ## MCP Tool Is Not Available In Codex
 
+Verify local setup first:
+
+```powershell
+npx -y -p codex-mcp-memory-server setup-codex-mcp-memory `
+  --project-path "C:\path\to\your\repo" `
+  --verify
+```
+
 Re-add the server:
 
 ```powershell

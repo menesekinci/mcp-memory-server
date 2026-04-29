@@ -10,6 +10,17 @@ npx -y -p codex-mcp-memory-server setup-codex-mcp-memory `
   --project-id "your-project-id"
 ```
 
+Verify the setup inputs before registering the MCP server:
+
+```powershell
+npx -y -p codex-mcp-memory-server setup-codex-mcp-memory `
+  --project-path "C:\path\to\your\repo" `
+  --project-id "your-project-id" `
+  --verify
+```
+
+The verification checks the project path, database directory, `npx`, `codex`, and prints the exact install command.
+
 Or add the MCP server manually:
 
 ```powershell
@@ -57,6 +68,12 @@ npx -y codex-mcp-memory-server
 | `INSTALL_GIT_HOOKS` | unset | Set to `1` to install local git hooks. Disabled by default. |
 
 ## Verify
+
+Before adding the server, use setup verification:
+
+```powershell
+npx -y -p codex-mcp-memory-server setup-codex-mcp-memory --verify
+```
 
 Ask the MCP client to run:
 

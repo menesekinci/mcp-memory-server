@@ -73,9 +73,18 @@ Recommended flow:
 5. Use `find_regression_candidates` when a date or timestamp is known.
 6. Inspect exact source only after MCP narrows the candidate symbols.
 
-## Active v0.3 Validation Backlog
+## Active v0.4 / v1.0 Hardening Backlog
 
-No active v0.3 validation items remain. Add new items here only when a concrete gap is found during real repository use.
+The original low-token MCP discovery goal has been reached. The active direction is now hardening the project into a more reliable v0.4/v1.0 candidate.
+
+- More real-repository dogfooding, with findings recorded in `docs/dogfooding.md` and converted into tests or docs updates.
+- More edge-case tests for Git reconciliation, caller resolution, project isolation, database migration, and MCP tool contracts.
+- Larger monorepo performance tests beyond the current 1k-file/10k-symbol synthetic benchmark.
+- Better onboarding and setup verification so users can confirm `npx`, Codex MCP registration, project path, DB path, and runtime readiness quickly.
+- Deeper Python and additional language semantic resolution after TS/Python benchmarks stay stable.
+- Release polish before v0.4/v1.0, including changelog, package contents review, install smoke, docs review, and version bump discipline.
+
+When an item is completed, move its concrete result into Completed Validation Notes instead of leaving stale task text here.
 
 ## Completed Validation Notes
 

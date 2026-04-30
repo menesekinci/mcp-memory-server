@@ -139,6 +139,7 @@ When an item is completed, move its concrete result into Completed Validation No
 - Phase 11 memory quality now marks decisions as `current`, `needs_review`, or `superseded`; linked symbol changes trigger review metadata, `changed_symbols_risk` marks affected decisions under review, and replacement decisions can set `supersedes_decision_id`.
 - Phase 12 real-repository dogfooding now runs through `npm run dogfood:real` against Express, Zod, Typer, Click, and Requests. It records reports under `dogfood/results/` and converted real findings into project-relative path ranking, quieter TypeScript checker resolution, and isolated dogfood databases.
 - v1.0 setup/privacy polish now includes `mcp-memory-doctor` for local readiness checks and `MCP_MEMORY_DISABLE_BODY_STORAGE=1` for metadata-only indexing when source bodies should not be persisted in SQLite.
+- Additional hardening tests now cover doctor failure reports, privacy-mode `read_context` and git-history body behavior, compact `changed_since`, and tiny-budget disclosure through `budget.over_budget`.
 
 ## Verification
 

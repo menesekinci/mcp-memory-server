@@ -262,6 +262,15 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
     const budgetedSearch = JSON.parse(budgetedSearchText);
     assert(Math.ceil(budgetedSearchText.length / 4) <= 220, 'code_search should respect max_tokens by trimming optional context');
     assert(budgetedSearch.budget.max_tokens === 220, 'code_search should report the requested max_tokens budget');
+    const tinyBudgetSearchText = (await callTool('code_search', {
+        project_id: projectId,
+        query: 'calculateTotal',
+        max_tokens: 1
+    })).content[0].text;
+    const tinyBudgetSearch = JSON.parse(tinyBudgetSearchText);
+    assert(tinyBudgetSearch.budget.max_tokens === 120, 'code_search should clamp tiny positive max_tokens to the minimum supported budget');
+    assert(typeof tinyBudgetSearch.budget.over_budget === 'boolean', 'code_search should disclose when a tiny budget cannot fit the minimum response');
+    assert(tinyBudgetSearch.budget.truncated === true, 'code_search should truncate optional context for tiny budgets');
 
     const oldProjectPath = process.env.PROJECT_PATH;
     const pathPollutionRoot = path.join(os.tmpdir(), 'Typer');
@@ -797,6 +806,13 @@ async function testBodyStoragePrivacyMode(
         }));
         assert(body.body === null && body.body_unavailable === 'body_storage_disabled', 'get_symbol_body should disclose unavailable body in privacy mode');
         assert(!JSON.stringify(body).includes('sensitive implementation'), 'privacy-mode body response should not leak source text');
+
+        const context = parseToolJson<any>(await callTool('read_context', {
+            project_id: projectId,
+            ref: symbols[0].ref,
+            include_body: true
+        }));
+        assert(context.target.body_unavailable === 'body_storage_disabled' && !('body' in context.target), 'read_context should disclose unavailable body without leaking source text');
     } finally {
         if (previous === undefined) delete process.env.MCP_MEMORY_DISABLE_BODY_STORAGE;
         else process.env.MCP_MEMORY_DISABLE_BODY_STORAGE = previous;
@@ -1366,7 +1382,11 @@ export function sideBranchSymbol() { return 20; }
     assert(replacementsActive.count === 12, 'large branch switch should index replacement symbols');
 }
 
-async function testGitHistory(db: TestDb, indexGitHistory: (projectPath: string, projectId?: string) => void) {
+async function testGitHistory(
+    db: TestDb,
+    indexGitHistory: (projectPath: string, projectId?: string) => void,
+    callTool: (name: string, args?: Record<string, any>) => Promise<any>
+) {
     const projectId = 'git-history';
     const projectPath = createTempDir('mcp-memory-git');
     const filePath = path.join(projectPath, 'src', 'history.ts');
@@ -1392,6 +1412,35 @@ async function testGitHistory(db: TestDb, indexGitHistory: (projectPath: string,
     assert(history.length === 2, 'indexGitHistory should index both commits for the symbol');
     assert(history.some(row => row.commit_message === 'add history symbol'), 'git history should include the initial commit');
     assert(history.some(row => row.commit_message === 'update history symbol'), 'git history should include the update commit');
+
+    const privacyProjectId = 'git-history-privacy';
+    const privacyProjectPath = createTempDir('mcp-memory-git-history-privacy');
+    const privacyFilePath = path.join(privacyProjectPath, 'src', 'history.ts');
+    const previous = process.env.MCP_MEMORY_DISABLE_BODY_STORAGE;
+    try {
+        execFileSync('git', ['init'], { cwd: privacyProjectPath, stdio: 'ignore' });
+        execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: privacyProjectPath });
+        execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: privacyProjectPath });
+        writeFile(privacyFilePath, 'export function privateHistory() { return "private body"; }\n');
+        execFileSync('git', ['add', '.'], { cwd: privacyProjectPath });
+        execFileSync('git', ['commit', '-m', 'add private history'], { cwd: privacyProjectPath, stdio: 'ignore' });
+        process.env.MCP_MEMORY_DISABLE_BODY_STORAGE = '1';
+        indexGitHistory(privacyProjectPath, privacyProjectId);
+
+        const privacySymbolId = `${privacyProjectId}:${privacyFilePath}:function:privateHistory`;
+        const row = db.prepare("SELECT body FROM symbol_history WHERE symbol_id = ? LIMIT 1")
+          .get(privacySymbolId) as { body: string | null } | undefined;
+        assert(row && row.body === null, 'privacy-mode git history should not persist historical bodies');
+        const historyWithBody = parseToolJson<any[]>(await callTool('get_symbol_history', {
+            symbol_id: privacySymbolId,
+            include_body: true
+        }));
+        assert(historyWithBody[0].body === null && historyWithBody[0].body_unavailable === 'body_storage_disabled', 'get_symbol_history should disclose unavailable privacy-mode bodies');
+        assert(!JSON.stringify(historyWithBody).includes('private body'), 'privacy-mode history response should not leak source text');
+    } finally {
+        if (previous === undefined) delete process.env.MCP_MEMORY_DISABLE_BODY_STORAGE;
+        else process.env.MCP_MEMORY_DISABLE_BODY_STORAGE = previous;
+    }
 }
 
 async function main() {
@@ -1423,7 +1472,7 @@ async function main() {
     await testGitMergeRewriteAndLargeSwitch(runtime.db, runtime.indexFile, runtime.reconcileProjectFiles);
     console.log('Git merge, rewrite, and large switch tests passed.');
 
-    await testGitHistory(runtime.db, runtime.indexGitHistory);
+    await testGitHistory(runtime.db, runtime.indexGitHistory, runtime.callTool);
     console.log('Git history tests passed.');
 }
 

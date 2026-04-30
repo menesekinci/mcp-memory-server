@@ -1,6 +1,6 @@
 /// <reference types="node" />
 
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -49,6 +49,21 @@ function main() {
         }
         if (!doctor.checks.some((check: any) => check.name === 'supported_sources')) {
             throw new Error(`Doctor did not include supported source scan. output=${doctorOutput}`);
+        }
+        const failedDoctor = spawnSync(nodeCommand(), [
+            path.join(process.cwd(), 'bin', 'mcp-memory-doctor.js'),
+            '--project-path',
+            path.join(projectPath, 'missing-project'),
+            '--db-path',
+            dbPath,
+            '--json'
+        ], { encoding: 'utf8' });
+        if (failedDoctor.status === 0) {
+            throw new Error(`Doctor should fail for a missing project path. output=${failedDoctor.stdout}`);
+        }
+        const failedReport = JSON.parse(failedDoctor.stdout);
+        if (failedReport.ok !== false || !failedReport.checks.some((check: any) => check.name === 'project_path' && check.status === 'fail')) {
+            throw new Error(`Doctor failure report did not include project_path failure. output=${failedDoctor.stdout}`);
         }
         console.log('Setup helper smoke passed.');
     } finally {

@@ -37,7 +37,7 @@ When `MCP_MEMORY_DISABLE_BODY_STORAGE=1` is set, symbol bodies are not persisted
 | `read_context` | One focused symbol packet with target metadata, optional body, callers, decisions, recent history, and freshness. |
 | `impact_analysis` | Risk-oriented impact summary for a target symbol or current Git changes, including callers, linked decisions, freshness, and `why`. |
 
-These tools accept `max_tokens`. The server estimates JSON size with `characters / 4`, trims optional arrays or body text when needed, and returns a `budget` object with `estimated_tokens` and `truncated`.
+These tools accept `max_tokens`. The server estimates JSON size with `characters / 4`, trims optional arrays or body text when needed, and returns a `budget` object with `estimated_tokens`, `truncated`, and `over_budget`. `over_budget: true` means the server trimmed everything optional but the minimum useful response still cannot fit the requested budget.
 
 ## Symbol Tools
 

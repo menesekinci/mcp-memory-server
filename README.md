@@ -22,10 +22,10 @@ Agents often spend a lot of tokens finding the right file or function before rea
 Current benchmark task: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=5325
+classic_tokens=5488
 mcp_tokens=50
 savings=99.1%
-smaller_output=106.5x
+smaller_output=109.8x
 ```
 
 Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.

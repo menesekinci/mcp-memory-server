@@ -445,22 +445,27 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
   if (name === "get_symbol_history") {
     const symbolId = args.symbol_id;
     const history = db.prepare("SELECT * FROM symbol_history WHERE symbol_id = ? ORDER BY version DESC LIMIT ?").all(symbolId, args.limit || 10) as any[];
-    const response = history.map(row => ({
-      id: row.id,
-      symbol_id: row.symbol_id,
-      version: row.version,
-      signature: row.signature,
-      start_line: row.start_line,
-      end_line: row.end_line,
-      commit_sha: row.commit_sha,
-      commit_message: row.commit_message,
-      commit_author: row.commit_author,
-      commit_at: row.commit_at,
-      change_type: row.change_type,
-      branch: row.branch,
-      pr_reference: row.pr_reference,
-      ...(args.include_body ? { body: row.body } : {})
-    }));
+    const response = history.map(row => {
+      const base = {
+        id: row.id,
+        symbol_id: row.symbol_id,
+        version: row.version,
+        signature: row.signature,
+        start_line: row.start_line,
+        end_line: row.end_line,
+        commit_sha: row.commit_sha,
+        commit_message: row.commit_message,
+        commit_author: row.commit_author,
+        commit_at: row.commit_at,
+        change_type: row.change_type,
+        branch: row.branch,
+        pr_reference: row.pr_reference
+      };
+      if (!args.include_body) return base;
+      return row.body === null
+        ? { ...base, body: null, body_unavailable: bodyUnavailableReason() }
+        : { ...base, body: row.body };
+    });
     return {
       content: [{ type: "text", text: JSON.stringify(response) }],
     };
@@ -1210,11 +1215,13 @@ function budgetedJson(payload: any, maxTokens?: number) {
   result.budget = {
     max_tokens: budget,
     estimated_tokens: estimateTokens(result),
-    truncated: false
+    truncated: false,
+    over_budget: false
   };
 
   if (JSON.stringify(result).length <= maxChars) {
     result.budget.estimated_tokens = estimateTokens(result);
+    result.budget.over_budget = result.budget.estimated_tokens > budget;
     return JSON.stringify(result);
   }
 
@@ -1243,6 +1250,7 @@ function budgetedJson(payload: any, maxTokens?: number) {
   }
 
   result.budget.estimated_tokens = estimateTokens(result);
+  result.budget.over_budget = result.budget.estimated_tokens > budget;
   return JSON.stringify(result);
 }
 

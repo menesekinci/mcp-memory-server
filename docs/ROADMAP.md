@@ -76,6 +76,9 @@ See also [Product Vision](VISION.md) and [v1.0 Criteria](V1_CRITERIA.md). The cu
 - [x] Add Python `self.method()` caller extraction.
 - [x] Add Python package `__init__.py` re-export handling.
 - [x] Add Python simple constructor-assigned instance method resolution beyond `self`.
+- [x] Add Python async function indexing and async caller coverage.
+- [x] Add Python dotted module import caller resolution.
+- [x] Add Python same-file inherited `self.method()` caller resolution.
 - [x] Add lightweight TypeScript constructor/type-annotation instance method resolution.
 - [x] Add TSX/JSX component usage graph.
 - [x] Add TypeScript compiler API based type-aware resolution.

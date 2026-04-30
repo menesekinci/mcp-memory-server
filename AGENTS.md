@@ -23,7 +23,7 @@ The project is not meant to replace source inspection. It is meant to make the d
 - Phase 0-6 are complete: published core, benchmarks, TS/JS call graph, Git-aware incremental indexing, docs/adoption, language depth, and plugin polish.
 - v0.3 real-world validation has been completed and folded into the current hardening baseline.
 - The active direction is v0.4.x / v1.0 hardening: real-repository validation, stronger tool contracts, performance stability, setup verification, and release discipline.
-- TS/JS caller precision is the strongest path, including import/barrel resolution, selective TypeScript compiler API symbol resolution, simple instance method calls, and TSX/JSX component usage. Python is supported with symbol discovery, same-file calls, relative/module imports, package re-exports, `self.method()`, and simple constructor-assigned instance method calls.
+- TS/JS caller precision is the strongest path, including import/barrel resolution, selective TypeScript compiler API symbol resolution, simple instance method calls, and TSX/JSX component usage. Python is supported with symbol discovery, async functions, same-file calls, relative/module imports, dotted module calls, package re-exports, `self.method()`, inherited `self.method()`, and simple constructor-assigned instance method calls.
 
 ## Source of Truth
 
@@ -125,6 +125,7 @@ When an item is completed, move its concrete result into Completed Validation No
 - Performance and scale validation now runs as `performance_scale_10k_symbols`, covering cold indexing for 1k files/10k symbols, search latency, caller latency, incremental reindex, database growth, and broad changed-symbol risk latency.
 - Dogfooding findings were recorded in `docs/dogfooding.md`, and release steps were moved into `docs/release.md` so v0.3 validation tracking stays complete but readable.
 - Python language depth now covers package `__init__.py` re-export chains and simple constructor-assigned instance method calls, with integration and benchmark coverage added so `find_callers` can resolve practical Python package call paths beyond same-file references.
+- Python language depth now also covers `async def`, async call sites, dotted module imports such as `package.module.function()`, and same-file inherited `self.method()` calls, with integration and benchmark coverage.
 - TS/TSX language depth now covers simple constructor/type-annotation instance method calls and TSX/JSX component usage graph edges, with integration and benchmark coverage added so component callers and class-method callers are visible through `find_callers`.
 - TypeScript compiler API resolution now runs selectively for semantic cases such as imported symbols, JSX components, and typed/member calls. This resolves function-return-typed instance method calls while preserving the tree-sitter fast path for plain same-file code so the 10k-symbol scale benchmark remains stable.
 - Monorepo performance validation now includes `performance_monorepo_workspace`, a synthetic 20-package workspace benchmark covering cold indexing, symbol search, caller lookup, incremental reindex, changed-symbol risk, database growth, and ignored generated output.

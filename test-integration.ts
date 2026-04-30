@@ -1047,18 +1047,28 @@ from .pricing import calculate_external_total as external_total
 from .pricing import PriceCalculator as Calculator
 from . import exported_total
 import billing.money as money
+import billing.money
 
 def calculate_total():
     return 100
 
+async def calculate_async_total():
+    return 300
+
 def checkout_py():
     return calculate_total()
+
+async def checkout_async_py():
+    return await calculate_async_total()
 
 def checkout_external_py():
     return external_total()
 
 def checkout_module_py():
     return money.round_money(10)
+
+def checkout_nested_module_py():
+    return billing.money.round_money(20)
 
 def checkout_reexport_py():
     return exported_total()
@@ -1074,6 +1084,14 @@ class PriceCalculator:
     def total(self, value):
         return self.normalize(value)
 
+class BaseCalculator:
+    def inherited_total(self, value):
+        return value
+
+class AdvancedCalculator(BaseCalculator):
+    def total(self, value):
+        return self.inherited_total(value)
+
 def mention_only_py():
     return "calculate_total"
 `);
@@ -1085,13 +1103,17 @@ def mention_only_py():
               .get(projectId, 'calculateTotal', jsFile);
             const pyTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'calculate_total', pyFile);
+            const pyAsyncTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'calculate_async_total', pyFile);
             const pyExternalTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'calculate_external_total', pyPricingFile);
             const pyModuleTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'round_money', pyMoneyFile);
             const pyInstanceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'total', pyPricingFile);
-            return Boolean(jsTarget && pyTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget);
+            const pyInheritedTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'inherited_total', pyFile);
+            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget);
         });
 
         const jsTarget = db.prepare("SELECT id, language FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -1116,6 +1138,14 @@ def mention_only_py():
         assert(pyCallers.definite_callers.some(c => c.qualified_name === 'checkout_py' && c.resolution_method === 'ast_python_name'), 'Python callers should be extracted from AST call nodes');
         assert(pyCallers.probable_callers.some(c => c.qualified_name === 'mention_only_py'), 'Python fuzzy fallback should keep string-only mentions as probable');
 
+        const pyAsyncTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'calculate_async_total', pyFile) as { id: string } | undefined;
+        const pyAsyncCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: pyAsyncTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(pyAsyncCallers.definite_callers.some(c => c.qualified_name === 'checkout_async_py' && c.resolution_method === 'ast_python_name'), 'Python async functions should be indexed and resolved as callers');
+
         const pyExternalTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'calculate_external_total', pyPricingFile) as { id: string } | undefined;
         const pyExternalCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
@@ -1132,6 +1162,7 @@ def mention_only_py():
             min_confidence: 0.0
         }));
         assert(pyModuleCallers.definite_callers.some(c => c.qualified_name === 'checkout_module_py' && c.resolution_method === 'ast_python_module_import'), 'Python module import aliases should resolve cross-file callers');
+        assert(pyModuleCallers.definite_callers.some(c => c.qualified_name === 'checkout_nested_module_py' && c.resolution_method === 'ast_python_module_import'), 'Python dotted module imports should resolve cross-file callers');
 
         const pyMethodTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'normalize', pyFile) as { id: string } | undefined;
@@ -1148,6 +1179,14 @@ def mention_only_py():
             min_confidence: 0.0
         }));
         assert(pyInstanceCallers.definite_callers.some(c => c.qualified_name === 'checkout_instance_py' && c.resolution_method === 'ast_python_instance_method'), 'Python constructor-assigned object method calls should resolve cross-file method callers');
+
+        const pyInheritedTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'inherited_total', pyFile) as { id: string } | undefined;
+        const pyInheritedCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: pyInheritedTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(pyInheritedCallers.definite_callers.some(c => c.qualified_name === 'AdvancedCalculator.total' && c.resolution_method === 'ast_python_inherited_self_method'), 'Python inherited self.method calls should resolve to base class methods');
     } finally {
         await watcher.close();
     }

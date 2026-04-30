@@ -362,12 +362,19 @@ from .pricing import calculate_external_total as external_total
 from .pricing import PriceCalculator as Calculator
 from . import exported_total
 import billing.money as money
+import billing.money
 
 def calculate_total():
     return 100
 
+async def calculate_async_total():
+    return 300
+
 def checkout_py():
     return calculate_total()
+
+async def checkout_async_py():
+    return await calculate_async_total()
 
 def checkout_external_py():
     return external_total()
@@ -375,12 +382,23 @@ def checkout_external_py():
 def checkout_module_py():
     return money.round_money(10)
 
+def checkout_nested_module_py():
+    return billing.money.round_money(20)
+
 def checkout_reexport_py():
     return exported_total()
 
 def checkout_instance_py():
     calculator = Calculator()
     return calculator.total(10)
+
+class BaseCalculator:
+    def inherited_total(self, value):
+        return value
+
+class AdvancedCalculator(BaseCalculator):
+    def total(self, value):
+        return self.inherited_total(value)
 `);
 
     const runtime = await withRuntime(projectPath, projectId);
@@ -391,45 +409,60 @@ def checkout_instance_py():
               .get(projectId, 'calculateTotal', jsFile);
             const pyTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'calculate_total', pyFile);
+            const pyAsyncTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'calculate_async_total', pyFile);
             const pyExternalTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'calculate_external_total', pyPricingFile);
             const pyModuleTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'round_money', pyMoneyFile);
             const pyInstanceTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'total', pyPricingFile);
-            return Boolean(jsTarget && pyTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget);
+            const pyInheritedTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'inherited_total', pyFile);
+            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget);
         });
 
         const jsTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'calculateTotal', jsFile) as { id: string };
         const pyTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'calculate_total', pyFile) as { id: string };
+        const pyAsyncTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'calculate_async_total', pyFile) as { id: string };
         const pyExternalTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'calculate_external_total', pyPricingFile) as { id: string };
         const pyModuleTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'round_money', pyMoneyFile) as { id: string };
         const pyInstanceTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'total', pyPricingFile) as { id: string };
+        const pyInheritedTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'inherited_total', pyFile) as { id: string };
         const jsPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: jsTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyTarget.id, min_confidence: 0.0 })).content[0].text);
+        const pyAsyncPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyAsyncTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyExternalPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyExternalTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyModulePayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyModuleTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyInstancePayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyInstanceTarget.id, min_confidence: 0.0 })).content[0].text);
+        const pyInheritedPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyInheritedTarget.id, min_confidence: 0.0 })).content[0].text);
         const jsCallers = jsPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyCallers = pyPayload.definite_callers.map((caller: any) => caller.qualified_name);
+        const pyAsyncCallers = pyAsyncPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyExternalCallers = pyExternalPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyModuleCallers = pyModulePayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyInstanceCallers = pyInstancePayload.definite_callers.map((caller: any) => caller.qualified_name);
+        const pyInheritedCallers = pyInheritedPayload.definite_callers.map((caller: any) => caller.qualified_name);
 
         return {
             name: 'language_depth_js_python_callers',
-            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python from/re-export: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}; Python instance-method: ${pyInstanceCallers.join(', ') || 'none'}.`,
+            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python async: ${pyAsyncCallers.join(', ') || 'none'}; Python from/re-export: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}; Python instance-method: ${pyInstanceCallers.join(', ') || 'none'}; Python inherited-self: ${pyInheritedCallers.join(', ') || 'none'}.`,
             passed: jsCallers.includes('checkout')
                 && pyCallers.includes('checkout_py')
+                && pyAsyncCallers.includes('checkout_async_py')
                 && pyExternalCallers.includes('checkout_external_py')
                 && pyExternalCallers.includes('checkout_reexport_py')
                 && pyModuleCallers.includes('checkout_module_py')
+                && pyModuleCallers.includes('checkout_nested_module_py')
                 && pyInstanceCallers.includes('checkout_instance_py')
+                && pyInheritedCallers.includes('AdvancedCalculator.total')
         };
     } finally {
         await watcher.close();

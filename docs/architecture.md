@@ -84,10 +84,13 @@ Fuzzy matching remains as a lower-confidence fallback.
 Python caller extraction currently supports:
 
 - Same-file name-based calls from Python `call` AST nodes.
+- `async def` symbols and async call sites.
 - Relative `from .module import symbol` calls, including aliases.
 - Package `__init__.py` re-export chains for relative imports.
 - Module imports such as `import package.module as alias` followed by `alias.function()`.
+- Dotted module calls such as `import package.module` followed by `package.module.function()`.
 - Same-file `self.method()` calls.
+- Same-file inherited `self.method()` calls where a subclass calls a base class method.
 - Simple constructor-assigned instance method calls such as `service = Service()` followed by `service.run()`.
 
 Fuzzy matching remains available for string-only mentions and broader probable caller fallback.

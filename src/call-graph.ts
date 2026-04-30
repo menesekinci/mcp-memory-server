@@ -85,6 +85,8 @@ function extractPythonCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[]
     const calls: CallReference[] = [];
     const imports = extractPythonImports(tree.rootNode, filePath);
     const objectTypes = extractPythonObjectTypes(tree.rootNode, filePath, imports);
+    const classBases = extractPythonClassBases(tree.rootNode, filePath, imports);
+    const classMethods = collectPythonClassMethods(symbols);
 
     function traverse(node: Parser.SyntaxNode) {
         if (node.type === 'call') {
@@ -96,16 +98,21 @@ function extractPythonCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[]
                 const instanceMethod = !imported && !selfMethod && callee.memberName
                     ? resolvePythonInstanceMethod(callee, objectTypes)
                     : null;
-                const selfQualifiedName = selfMethod ? scopedMemberName(caller.qualified_name, callee.memberName) : undefined;
+                const inheritedSelfMethod = selfMethod
+                    ? resolvePythonSelfMethod(caller, callee.memberName, classMethods, classBases)
+                    : null;
+                const selfQualifiedName = selfMethod
+                    ? inheritedSelfMethod?.qualifiedName || scopedMemberName(caller.qualified_name, callee.memberName)
+                    : undefined;
                 calls.push({
                     caller_symbol_id: caller.id,
-                    target_name: imported?.name || instanceMethod?.name || callee.memberName || callee.localName,
+                    target_name: imported?.name || instanceMethod?.name || inheritedSelfMethod?.name || callee.memberName || callee.localName,
                     target_qualified_name: instanceMethod?.qualifiedName || selfQualifiedName,
-                    target_file_path: imported?.filePath || instanceMethod?.filePath,
+                    target_file_path: imported?.filePath || instanceMethod?.filePath || inheritedSelfMethod?.filePath,
                     file_path: filePath,
                     line: node.startPosition.row + 1,
-                    confidence: imported ? 0.95 : instanceMethod ? 0.93 : selfMethod ? 0.92 : 0.9,
-                    resolution_method: imported?.method || instanceMethod?.method || (selfMethod ? 'ast_python_self_method' : 'ast_python_name')
+                    confidence: imported ? 0.95 : instanceMethod ? 0.93 : inheritedSelfMethod ? 0.91 : selfMethod ? 0.92 : 0.9,
+                    resolution_method: imported?.method || instanceMethod?.method || inheritedSelfMethod?.method || (selfMethod ? 'ast_python_self_method' : 'ast_python_name')
                 });
             }
         }
@@ -154,6 +161,8 @@ type PythonImportMap = {
 };
 
 type PythonObjectTypeMap = Map<string, { className: string; filePath: string }>;
+type PythonClassBaseMap = Map<string, Array<{ className: string; filePath: string }>>;
+type PythonClassMethodMap = Map<string, Set<string>>;
 
 function extractCallee(node: Parser.SyntaxNode): Callee | null {
     const functionNode = node.childForFieldName('function') || node.namedChild(0);
@@ -188,7 +197,7 @@ function extractPythonCallee(node: Parser.SyntaxNode): Callee | null {
         const identifiers = identifiersOf(functionNode);
         if (identifiers.length >= 2) {
             return {
-                localName: identifiers[identifiers.length - 2].text,
+                localName: identifiers.slice(0, -1).map(identifier => identifier.text).join('.'),
                 memberName: identifiers[identifiers.length - 1].text
             };
         }
@@ -508,6 +517,10 @@ function readPythonImportedModule(node: Parser.SyntaxNode, filePath: string, imp
         ? identifiers[identifiers.length - 1].text
         : identifiers[0].text;
     imports.modules.set(localName, sourceFilePath);
+    if (node.type !== 'aliased_import') {
+        const fullName = identifiers.map(identifier => identifier.text).join('.');
+        imports.modules.set(fullName, sourceFilePath);
+    }
 }
 
 function resolvePythonImportedTarget(callee: Callee, imports: PythonImportMap) {
@@ -567,6 +580,100 @@ function resolvePythonInstanceMethod(callee: Callee, objectTypes: PythonObjectTy
         filePath: objectType.filePath,
         method: 'ast_python_instance_method'
     };
+}
+
+function collectPythonClassMethods(symbols: IndexedSymbol[]): PythonClassMethodMap {
+    const methods: PythonClassMethodMap = new Map();
+    for (const symbol of symbols) {
+        if (!symbol.qualified_name || !symbol.qualified_name.includes('.')) continue;
+        const parts = symbol.qualified_name.split('.');
+        const methodName = parts.pop()!;
+        const className = parts.join('.');
+        if (!methods.has(className)) methods.set(className, new Set());
+        methods.get(className)!.add(methodName);
+    }
+    return methods;
+}
+
+function extractPythonClassBases(root: Parser.SyntaxNode, filePath: string, imports: PythonImportMap): PythonClassBaseMap {
+    const bases: PythonClassBaseMap = new Map();
+
+    function traverse(node: Parser.SyntaxNode) {
+        if (node.type === 'class_definition') {
+            const nameNode = node.childForFieldName('name');
+            if (nameNode) {
+                const classBases: Array<{ className: string; filePath: string }> = [];
+                for (const baseName of pythonBaseNames(node)) {
+                    const imported = imports.named.get(baseName) || imports.named.get(baseName.split('.').slice(-1)[0]);
+                    classBases.push({
+                        className: imported?.importedName || baseName.split('.').slice(-1)[0],
+                        filePath: imported ? resolvePythonExportedTarget(imported.importedName, imported.sourceFilePath).filePath : filePath
+                    });
+                }
+                bases.set(nameNode.text, classBases);
+            }
+        }
+        for (let i = 0; i < node.namedChildCount; i++) {
+            traverse(node.namedChild(i));
+        }
+    }
+
+    traverse(root);
+    return bases;
+}
+
+function pythonBaseNames(classNode: Parser.SyntaxNode) {
+    const header = classNode.text.split(':')[0];
+    const match = header.match(/class\s+\w+\s*\(([^)]*)\)/);
+    if (!match) return [];
+    return match[1]
+        .split(',')
+        .map(base => base.trim())
+        .filter(Boolean)
+        .map(base => base.split(/\s+/)[0].replace(/\(.*$/, ''));
+}
+
+function resolvePythonSelfMethod(
+    caller: IndexedSymbol,
+    memberName: string | undefined,
+    classMethods: PythonClassMethodMap,
+    classBases: PythonClassBaseMap,
+) {
+    const currentClass = caller.qualified_name?.split('.').slice(0, -1).join('.');
+    if (!currentClass || !memberName) return null;
+    if (classMethods.get(currentClass)?.has(memberName)) {
+        return {
+            name: memberName,
+            qualifiedName: `${currentClass}.${memberName}`,
+            filePath: undefined,
+            method: 'ast_python_self_method'
+        };
+    }
+    const base = resolvePythonBaseMethod(currentClass, memberName, classMethods, classBases);
+    if (!base) return null;
+    return {
+        name: memberName,
+        qualifiedName: `${base.className}.${memberName}`,
+        filePath: base.filePath,
+        method: 'ast_python_inherited_self_method'
+    };
+}
+
+function resolvePythonBaseMethod(
+    className: string,
+    memberName: string,
+    classMethods: PythonClassMethodMap,
+    classBases: PythonClassBaseMap,
+    seen = new Set<string>()
+): { className: string; filePath: string } | null {
+    if (seen.has(className)) return null;
+    seen.add(className);
+    for (const base of classBases.get(className) || []) {
+        if (classMethods.get(base.className)?.has(memberName)) return base;
+        const inherited = resolvePythonBaseMethod(base.className, memberName, classMethods, classBases, seen);
+        if (inherited) return inherited;
+    }
+    return null;
 }
 
 function resolvePythonExportedTarget(importedName: string, sourceFilePath: string, seen = new Set<string>()): { name: string; filePath: string; method: string } {

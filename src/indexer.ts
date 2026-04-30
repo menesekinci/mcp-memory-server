@@ -670,7 +670,7 @@ function extractSymbols(tree: Parser.Tree, content: string, filePath: string, la
                 }
             }
         } else if (language === 'python') {
-            if (node.type === 'function_definition') {
+            if (node.type === 'function_definition' || node.type === 'async_function_definition') {
                 const nameNode = node.childForFieldName('name');
                 if (nameNode) {
                     symbol = {

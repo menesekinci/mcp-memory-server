@@ -4,7 +4,7 @@
 
 Symbol-aware MCP memory server for Codex and coding agents.
 
-It indexes TypeScript, TSX, JavaScript, JSX, and Python projects with tree-sitter, stores symbol metadata in SQLite, and exposes compact MCP tools for low-token project discovery. The current implementation is TS/JS-first for caller precision, including imports, barrel re-exports, selective TypeScript compiler API symbol resolution, simple instance method calls, and TSX/JSX component usage. Python supports symbol discovery, same-file calls, relative/module import calls, package `__init__.py` re-exports, `self.method()` calls, and simple constructor-assigned instance method calls.
+It indexes TypeScript, TSX, JavaScript, JSX, and Python projects with tree-sitter, stores symbol metadata in SQLite, and exposes compact MCP tools for low-token project discovery. The current implementation is TS/JS-first for caller precision, including imports, barrel re-exports, selective TypeScript compiler API symbol resolution, simple instance method calls, and TSX/JSX component usage. Python supports symbol discovery, async functions, same-file calls, relative/module import calls, dotted module imports, package `__init__.py` re-exports, `self.method()` calls, inherited `self.method()` calls, and simple constructor-assigned instance method calls.
 
 ## Why
 
@@ -22,10 +22,10 @@ Agents often spend a lot of tokens finding the right file or function before rea
 Current benchmark task: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=5625
+classic_tokens=5810
 mcp_tokens=50
 savings=99.1%
-smaller_output=112.5x
+smaller_output=116.2x
 ```
 
 Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.

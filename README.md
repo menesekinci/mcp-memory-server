@@ -22,10 +22,10 @@ Agents often spend a lot of tokens finding the right file or function before rea
 Current benchmark task: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=4698
+classic_tokens=4888
 mcp_tokens=50
-savings=98.9%
-smaller_output=94.0x
+savings=99.0%
+smaller_output=97.8x
 ```
 
 Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
@@ -69,6 +69,9 @@ Discovery tools return compact results by default.
 
 Core tools:
 
+- `code_search`
+- `read_context`
+- `impact_analysis`
 - `index_status`
 - `search_symbols`
 - `lookup_symbol`
@@ -86,11 +89,12 @@ See [docs/tools.md](docs/tools.md) for the full tool list.
 
 ## Recommended Agent Flow
 
-1. Start with `index_status`, `search_symbols`, `lookup_symbol`, `search_history`, or `get_decisions`.
+1. Start with `code_search` for ranked compact context, or `index_status` when freshness is the first concern.
 2. Use compact output to identify a symbol, file, and line range.
-3. Call `get_symbol_body` only for selected symbols.
-4. Use shell search/read commands for docs, config, CSS, JSON, fixtures, and broad non-symbol searches.
-5. Save important project decisions with `save_decision`.
+3. Call `read_context` for the selected symbol before falling back to lower-level tools.
+4. Call `get_symbol_body` only when full source is needed.
+5. Use shell search/read commands for docs, config, CSS, JSON, fixtures, and broad non-symbol searches.
+6. Save important project decisions with `save_decision`.
 
 See [docs/agent-flows.md](docs/agent-flows.md) and [AGENTS.md](AGENTS.md) for task-specific flows.
 

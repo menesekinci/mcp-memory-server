@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-04-30T01:03:31.908Z",
+  "generated_at": "2026-04-30T01:15:20.502Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
-      "classic_chars": 18791,
-      "classic_tokens": 4698,
+      "classic_chars": 19552,
+      "classic_tokens": 4888,
       "mcp_chars": 200,
       "mcp_tokens": 50,
-      "token_savings_pct": 98.9,
+      "token_savings_pct": 99,
       "notes": "Find the callTool symbol with broad text search versus compact MCP symbol search.",
       "passed": true
     },
@@ -83,12 +83,12 @@
     },
     {
       "name": "performance_scale_10k_symbols",
-      "notes": "Cold index: 5406ms for 1000 files/10001 symbols; search: 3.9ms; caller: 2ms; incremental: 157.1ms for 1 changed file; risk: 217.5ms for 26 changed files; db: 8.1MB.",
+      "notes": "Cold index: 5711ms for 1000 files/10001 symbols; search: 4.3ms; caller: 2ms; incremental: 155.9ms for 1 changed file; risk: 195.6ms for 26 changed files; db: 8.2MB.",
       "passed": true
     },
     {
       "name": "performance_monorepo_workspace",
-      "notes": "Cold index: 3553ms for 20 packages/800 files/4801 symbols; search: 2.2ms; caller: 1.1ms; incremental: 214.5ms for 1 changed file; risk: 138ms for 6 changed files; db: 12.4MB.",
+      "notes": "Cold index: 3505ms for 20 packages/800 files/4801 symbols; search: 2ms; caller: 1ms; incremental: 196.2ms for 1 changed file; risk: 125.3ms for 6 changed files; db: 12.4MB.",
       "passed": true
     }
   ]

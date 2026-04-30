@@ -124,6 +124,8 @@ async function benchmarkSymbolDiscovery(): Promise<BenchmarkResult> {
     const classic = classicSearch(projectPath, 'callTool');
     const mcp = await runtime.callTool('search_symbols', { project_id: projectId, query: 'callTool', limit: 5 });
     const mcpText = mcp.content[0].text;
+    const mcpPayload = JSON.parse(mcpText);
+    const foundTarget = Array.isArray(mcpPayload) && mcpPayload.some((symbol: any) => symbol.name === 'callTool');
     const classicTokens = approxTokens(classic);
     const mcpTokens = approxTokens(mcpText);
     return {
@@ -134,7 +136,7 @@ async function benchmarkSymbolDiscovery(): Promise<BenchmarkResult> {
         mcp_tokens: mcpTokens,
         token_savings_pct: Math.round((1 - (mcpTokens / classicTokens)) * 1000) / 10,
         notes: 'Find the callTool symbol with broad text search versus compact MCP symbol search.',
-        passed: mcpTokens < classicTokens
+        passed: foundTarget && mcpTokens < classicTokens
     };
 }
 

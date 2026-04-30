@@ -134,6 +134,7 @@ When an item is completed, move its concrete result into Completed Validation No
 - v0.4.2 hardening corrected AGENTS/README version drift, made MCP server metadata read from `package.json`, added auto-created sessions for `save_message`, stores compact refs in SQLite for indexed lookups, and scopes symbol identity by qualified name so same-file same-name methods do not overwrite each other.
 - Product vision and v1.0 criteria were formalized around freshness, compact ranked context, small agent-facing tools, memory quality, real-repository validation, privacy controls, and setup/doctor polish.
 - P0 freshness contract now exposes project-level index health, per-symbol freshness metadata, stale/missing/unindexed/excluded counts, and stale-before/reconcile-after test coverage so agents can detect stale working-tree changes before trusting compact discovery results.
+- Phase 10 now has a first high-level agent context layer: `code_search` ranks compact matches with `why_this_matched`, `read_context` returns one focused symbol packet, and `impact_analysis` summarizes callers, freshness, and linked-decision risk without forcing agents through several low-level calls.
 
 ## Verification
 

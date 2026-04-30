@@ -138,7 +138,7 @@ export async function indexFile(filePath: string, projectId = 'default', options
 
         const parser = new Parser();
         parser.setLanguage(langConfig.language);
-        const tree = parser.parse(content);
+        const tree = parseContent(parser, content);
         const symbols = extractSymbols(tree, content, filePath, langConfig.name, projectId);
         const callReferences = ['typescript', 'javascript', 'python'].includes(langConfig.name)
             ? extractCallReferences(tree, symbols, filePath, langConfig.name)
@@ -638,6 +638,13 @@ function extractSymbols(tree: Parser.Tree, content: string, filePath: string, la
 }
 
 export { extractSymbols };
+
+function parseContent(parser: Parser, content: string) {
+    return parser.parse((index) => {
+        if (index >= content.length) return null;
+        return content.slice(index, index + 4096);
+    });
+}
 
 function signatureBeforeBody(node: Parser.SyntaxNode, content: string) {
     const bodyNode = node.childForFieldName('body');

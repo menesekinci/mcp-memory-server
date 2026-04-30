@@ -29,6 +29,54 @@ export async function listTools() {
   return {
     tools: [
       {
+        name: "code_search",
+        description: "Rank compact code context across symbols, decisions, and recent history. Use this as the first discovery tool for code tasks.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+            project_id: { type: "string", default: "default" },
+            project_path: { type: "string" },
+            kind: { type: "string" },
+            limit: { type: "number", default: 10 },
+            include_history: { type: "boolean", default: true },
+            include_decisions: { type: "boolean", default: true }
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "read_context",
+        description: "Read one focused context packet for a symbol: target metadata, optional body, callers, decisions, history, and freshness.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            symbol_id: { type: "string" },
+            ref: { type: "string" },
+            project_id: { type: "string", default: "default" },
+            include_body: { type: "boolean", default: false },
+            include_tests: { type: "boolean", default: false },
+            max_callers: { type: "number", default: 8 },
+            max_history: { type: "number", default: 5 }
+          },
+        },
+      },
+      {
+        name: "impact_analysis",
+        description: "Summarize likely impact for a target symbol or current Git changes using callers, freshness, and linked decisions.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            symbol_id: { type: "string" },
+            ref: { type: "string" },
+            project_id: { type: "string", default: "default" },
+            project_path: { type: "string" },
+            include_tests: { type: "boolean", default: false },
+            max_callers: { type: "number", default: 12 }
+          },
+        },
+      },
+      {
         name: "lookup_symbol",
         description: "Find symbols by exact name. Returns compact results by default; pass verbose=true for metadata or include_body=true for full bodies.",
         inputSchema: {
@@ -264,6 +312,82 @@ server.setRequestHandler(ListToolsRequestSchema, listTools);
 
 export async function callTool(name: string, rawArgs: Record<string, any> = {}) {
   const args = rawArgs;
+
+  if (name === "code_search") {
+    const projectName = args.project_id || 'default';
+    const results = rankedCodeSearch({
+      projectId: projectName,
+      query: args.query || '',
+      kind: args.kind,
+      limit: args.limit || 10
+    });
+    const decisions = args.include_decisions === false ? [] : findDecisionMatches(projectName, args.query || '', 5);
+    const history = args.include_history === false ? [] : findHistoryMatches(projectName, args.query || '', 5);
+    const projectPath = args.project_path || process.env.PROJECT_PATH;
+    const health = getProjectIndexHealth(projectPath, projectName);
+    return {
+      content: [{ type: "text", text: JSON.stringify({
+        query: args.query || '',
+        project_id: projectName,
+        freshness: health.freshness,
+        results,
+        related_decisions: decisions,
+        history_matches: history
+      }) }],
+    };
+  }
+
+  if (name === "read_context") {
+    const projectName = args.project_id || 'default';
+    const symbol = resolveActiveSymbol(args.symbol_id, args.ref, projectName);
+    if (!symbol) {
+      return { content: [{ type: "text", text: "Symbol not found." }] };
+    }
+    return {
+      content: [{ type: "text", text: JSON.stringify(buildReadContext(symbol, {
+        includeBody: Boolean(args.include_body),
+        includeTests: Boolean(args.include_tests),
+        maxCallers: args.max_callers || 8,
+        maxHistory: args.max_history || 5
+      })) }],
+    };
+  }
+
+  if (name === "impact_analysis") {
+    const projectName = args.project_id || process.env.PROJECT_ID || 'default';
+    const symbol = resolveActiveSymbol(args.symbol_id, args.ref, projectName);
+    if (symbol) {
+      return {
+        content: [{ type: "text", text: JSON.stringify(buildSymbolImpact(symbol, {
+          includeTests: Boolean(args.include_tests),
+          maxCallers: args.max_callers || 12
+        })) }],
+      };
+    }
+
+    const projectPath = args.project_path || process.env.PROJECT_PATH || process.cwd();
+    const changedFiles = listChangedSourceFiles(projectPath);
+    const changedSymbols = changedFiles.flatMap(filePath => {
+      return (db.prepare("SELECT * FROM symbols WHERE project_id = ? AND file_path = ? AND is_deleted = 0 ORDER BY name")
+        .all(projectName, filePath) as SymbolRow[])
+        .map(symbolRow => formatSymbol(symbolRow, { includeBody: false, verbose: false }));
+    });
+    const changedSymbolIds = changedSymbols.map((symbolRow: any) => resolveSymbolIdFromRef(symbolRow.ref, projectName)).filter(Boolean);
+    const decisions = decisionsForSymbolIds(projectName, changedSymbolIds);
+    const health = getProjectIndexHealth(projectPath, projectName);
+    return {
+      content: [{ type: "text", text: JSON.stringify({
+        mode: "changed_files",
+        project_id: projectName,
+        freshness: health.freshness,
+        changed_files: changedFiles,
+        changed_symbols: changedSymbols,
+        related_decisions: decisions,
+        risk_level: riskLevel(changedSymbols.length, decisions.length, health.freshness),
+        why: impactWhy(changedSymbols.length, decisions.length, health.freshness)
+      }) }],
+    };
+  }
 
   if (name === "lookup_symbol") {
     const projectName = args.project_id || 'default';
@@ -712,6 +836,275 @@ function formatSymbol(symbol: SymbolRow, options: { includeBody: boolean; verbos
     freshness,
     ...(options.includeBody ? { body: symbol.body } : {})
   };
+}
+
+function rankedCodeSearch(options: { projectId: string; query: string; kind?: string; limit: number }) {
+  const query = options.query.trim();
+  const like = `%${query}%`;
+  const sql = options.kind
+    ? `SELECT * FROM symbols WHERE project_id = ? AND is_deleted = 0 AND kind = ? AND (name LIKE ? OR qualified_name LIKE ? OR file_path LIKE ? OR signature LIKE ?) LIMIT 100`
+    : `SELECT * FROM symbols WHERE project_id = ? AND is_deleted = 0 AND (name LIKE ? OR qualified_name LIKE ? OR file_path LIKE ? OR signature LIKE ?) LIMIT 100`;
+  const params = options.kind
+    ? [options.projectId, options.kind, like, like, like, like]
+    : [options.projectId, like, like, like, like];
+  const symbols = db.prepare(sql).all(...params) as SymbolRow[];
+  const decisionRefs = symbolIdsForDecisionMatches(options.projectId, query);
+  const historyRefs = symbolIdsForHistoryMatches(options.projectId, query);
+  const lowerQuery = query.toLowerCase();
+
+  return symbols
+    .map(symbol => {
+      const why: string[] = [];
+      let score = 0;
+      const name = symbol.name.toLowerCase();
+      const qualified = symbol.qualified_name.toLowerCase();
+      const file = symbol.file_path.toLowerCase();
+      const signature = (symbol.signature || '').toLowerCase();
+
+      if (name === lowerQuery || qualified === lowerQuery) {
+        score += 100;
+        why.push('exact_symbol_match');
+      } else if (name.startsWith(lowerQuery) || qualified.startsWith(lowerQuery)) {
+        score += 70;
+        why.push('prefix_symbol_match');
+      } else if (name.includes(lowerQuery) || qualified.includes(lowerQuery)) {
+        score += 50;
+        why.push('symbol_name_match');
+      }
+      if (file.includes(lowerQuery)) {
+        score += 25;
+        why.push('file_path_match');
+      }
+      if (signature.includes(lowerQuery)) {
+        score += 15;
+        why.push('signature_match');
+      }
+      if (decisionRefs.has(symbol.id)) {
+        score += 20;
+        why.push('linked_decision_match');
+      }
+      if (historyRefs.has(symbol.id)) {
+        score += 10;
+        why.push('linked_history_match');
+      }
+
+      return {
+        score,
+        why_this_matched: why.length > 0 ? why : ['broad_metadata_match'],
+        symbol: formatSymbol(symbol, { includeBody: false, verbose: false })
+      };
+    })
+    .sort((a, b) => b.score - a.score || String((a.symbol as any).name).localeCompare(String((b.symbol as any).name)))
+    .slice(0, options.limit)
+    .map((result, index) => ({ rank: index + 1, ...result }));
+}
+
+function buildReadContext(symbol: SymbolRow, options: { includeBody: boolean; includeTests: boolean; maxCallers: number; maxHistory: number }) {
+  const callers = findCallersForSymbol(symbol, options.includeTests, 0.0);
+  const decisions = decisionsForSymbolIds(symbol.project_id, [symbol.id]);
+  const history = db.prepare(`
+    SELECT sh.version, sh.commit_sha, sh.commit_message, sh.commit_author, sh.commit_at, sh.change_type, sh.branch, sh.pr_reference
+    FROM symbol_history sh
+    WHERE sh.symbol_id = ?
+    ORDER BY sh.version DESC
+    LIMIT ?
+  `).all(symbol.id, options.maxHistory);
+
+  return {
+    target: formatSymbol(symbol, { includeBody: options.includeBody, verbose: true }),
+    freshness: getFileFreshness(symbol.file_path, symbol.project_id),
+    callers: {
+      definite: callers.definite_callers.slice(0, options.maxCallers),
+      probable: callers.probable_callers.slice(0, options.maxCallers)
+    },
+    decisions,
+    history,
+    notes: contextNotes(symbol, callers.definite_callers.length, decisions.length)
+  };
+}
+
+function buildSymbolImpact(symbol: SymbolRow, options: { includeTests: boolean; maxCallers: number }) {
+  const callers = findCallersForSymbol(symbol, options.includeTests, 0.0);
+  const definite = callers.definite_callers.slice(0, options.maxCallers);
+  const probable = callers.probable_callers.slice(0, options.maxCallers);
+  const decisions = decisionsForSymbolIds(symbol.project_id, [symbol.id]);
+  const freshness = getFileFreshness(symbol.file_path, symbol.project_id);
+  const impactCount = definite.length + probable.length;
+  return {
+    mode: "target_symbol",
+    target: formatSymbol(symbol, { includeBody: false, verbose: false }),
+    freshness,
+    callers: { definite, probable },
+    related_decisions: decisions,
+    risk_level: riskLevel(impactCount, decisions.length, freshness.freshness),
+    why: impactWhy(impactCount, decisions.length, freshness.freshness)
+  };
+}
+
+function findCallersForSymbol(symbol: SymbolRow, includeTests: boolean, minConfidence: number) {
+  let astCallers = db.prepare(`
+    SELECT s.id, s.qualified_name, s.file_path, sc.confidence, sc.resolution_method, sc.line
+    FROM symbol_calls sc
+    JOIN symbols s ON sc.caller_symbol_id = s.id
+    WHERE sc.project_id = ?
+    AND (
+      sc.target_symbol_id = ?
+      OR (
+        sc.target_name = ?
+        AND (sc.target_file_path IS NULL OR sc.target_file_path = ?)
+      )
+    )
+    AND s.is_deleted = 0
+  `).all(symbol.project_id, symbol.id, symbol.name, symbol.file_path) as Array<{
+    id: string;
+    qualified_name: string;
+    file_path: string;
+    confidence: number;
+    resolution_method: string;
+    line: number;
+  }>;
+
+  if (!includeTests) {
+    astCallers = astCallers.filter(c => !isTestFile(c.file_path));
+  }
+
+  const astCallerIds = new Set(astCallers.map(c => c.id));
+  let fuzzyCallers = db.prepare("SELECT * FROM symbols WHERE project_id = ? AND body LIKE ? AND id != ? AND is_deleted = 0")
+    .all(symbol.project_id, `%${symbol.name}%`, symbol.id) as SymbolRow[];
+  if (!includeTests) {
+    fuzzyCallers = fuzzyCallers.filter(c => !isTestFile(c.file_path));
+  }
+  fuzzyCallers = fuzzyCallers.filter(c => !astCallerIds.has(c.id));
+
+  const definiteCallers = astCallers.map(c => ({
+    symbol_id: c.id,
+    ref: symbolRef(c.id),
+    qualified_name: c.qualified_name,
+    file_path: relativeDisplayPath(c.file_path),
+    line: c.line,
+    confidence: c.confidence,
+    resolution_method: c.resolution_method
+  })).filter(c => c.confidence >= minConfidence);
+
+  const probableCallers = fuzzyCallers.map(c => ({
+    symbol_id: c.id,
+    ref: c.ref || symbolRef(c.id),
+    qualified_name: c.qualified_name,
+    file_path: relativeDisplayPath(c.file_path),
+    confidence: 0.5,
+    resolution_method: 'fuzzy_name_match'
+  })).filter(c => c.confidence >= minConfidence);
+
+  return {
+    definite_callers: definiteCallers,
+    probable_callers: probableCallers
+  };
+}
+
+function resolveActiveSymbol(symbolId: string | undefined, ref: string | undefined, projectId: string) {
+  const resolvedId = symbolId || (ref ? resolveSymbolIdFromRef(ref, projectId) : undefined);
+  if (!resolvedId) return undefined;
+  return db.prepare("SELECT * FROM symbols WHERE id = ? AND project_id = ? AND is_deleted = 0")
+    .get(resolvedId, projectId) as SymbolRow | undefined;
+}
+
+function decisionsForSymbolIds(projectId: string, symbolIds: string[]) {
+  if (symbolIds.length === 0) return [];
+  return db.prepare(`
+    SELECT DISTINCT d.id, d.summary, d.rationale, d.status, d.confidence, d.decided_at
+    FROM project_decisions d
+    JOIN decision_symbol_references dsr ON d.id = dsr.decision_id
+    WHERE d.project_id = ?
+    AND dsr.symbol_id IN (${symbolIds.map(() => '?').join(',')})
+    ORDER BY d.status = 'active' DESC, d.decided_at DESC
+    LIMIT 20
+  `).all(projectId, ...symbolIds);
+}
+
+function findDecisionMatches(projectId: string, query: string, limit: number) {
+  const like = `%${query}%`;
+  return db.prepare(`
+    SELECT id, summary, status, confidence, decided_at
+    FROM project_decisions
+    WHERE project_id = ?
+    AND (summary LIKE ? OR rationale LIKE ?)
+    ORDER BY decided_at DESC
+    LIMIT ?
+  `).all(projectId, like, like, limit);
+}
+
+function findHistoryMatches(projectId: string, query: string, limit: number) {
+  if (!query.trim()) return [];
+  try {
+    return db.prepare(`
+      SELECT m.id, m.content, m.created_at
+      FROM messages m
+      JOIN sessions s ON m.session_id = s.id
+      JOIN messages_fts fts ON m.rowid = fts.rowid
+      WHERE messages_fts MATCH ?
+      AND s.project_id = ?
+      ORDER BY rank
+      LIMIT ?
+    `).all(query, projectId, limit);
+  } catch {
+    return [];
+  }
+}
+
+function symbolIdsForDecisionMatches(projectId: string, query: string) {
+  const like = `%${query}%`;
+  const rows = db.prepare(`
+    SELECT DISTINCT dsr.symbol_id
+    FROM project_decisions d
+    JOIN decision_symbol_references dsr ON d.id = dsr.decision_id
+    WHERE d.project_id = ?
+    AND (d.summary LIKE ? OR d.rationale LIKE ?)
+  `).all(projectId, like, like) as Array<{ symbol_id: string }>;
+  return new Set(rows.map(row => row.symbol_id));
+}
+
+function symbolIdsForHistoryMatches(projectId: string, query: string) {
+  if (!query.trim()) return new Set<string>();
+  try {
+    const rows = db.prepare(`
+      SELECT DISTINCT msr.symbol_id
+      FROM messages m
+      JOIN sessions s ON m.session_id = s.id
+      JOIN messages_fts fts ON m.rowid = fts.rowid
+      JOIN message_symbol_references msr ON m.id = msr.message_id
+      WHERE messages_fts MATCH ?
+      AND s.project_id = ?
+    `).all(query, projectId) as Array<{ symbol_id: string }>;
+    return new Set(rows.map(row => row.symbol_id));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function riskLevel(impactCount: number, decisionCount: number, freshness: string) {
+  if (freshness === 'stale') return 'high';
+  if (impactCount >= 5 || decisionCount >= 2) return 'high';
+  if (impactCount > 0 || decisionCount > 0 || freshness === 'unknown') return 'medium';
+  return 'low';
+}
+
+function impactWhy(impactCount: number, decisionCount: number, freshness: string) {
+  const why: string[] = [];
+  if (freshness !== 'fresh') why.push(`freshness_${freshness}`);
+  if (impactCount > 0) why.push(`${impactCount}_caller_or_changed_symbol_links`);
+  if (decisionCount > 0) why.push(`${decisionCount}_linked_decisions`);
+  return why.length > 0 ? why : ['no_linked_callers_or_decisions_found'];
+}
+
+function contextNotes(symbol: SymbolRow, definiteCallerCount: number, decisionCount: number) {
+  const notes = [`target=${symbol.qualified_name}`];
+  if (definiteCallerCount > 0) notes.push(`${definiteCallerCount}_definite_callers`);
+  if (decisionCount > 0) notes.push(`${decisionCount}_linked_decisions`);
+  return notes;
+}
+
+function isTestFile(filePath: string) {
+  return /[._-](test|spec)\.[^.]+$/.test(filePath);
 }
 
 function resolveSymbolIdFromRef(ref: string | undefined, projectId: string) {

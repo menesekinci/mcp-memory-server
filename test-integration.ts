@@ -93,7 +93,7 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
 
     const tools = await listTools();
     const toolNames = tools.tools.map((tool: any) => tool.name);
-    for (const expected of ['search_symbols', 'lookup_symbol', 'get_symbol_body', 'find_callers', 'reindex_changed_files', 'reconcile_index', 'changed_symbols_risk']) {
+    for (const expected of ['code_search', 'read_context', 'impact_analysis', 'search_symbols', 'lookup_symbol', 'get_symbol_body', 'find_callers', 'reindex_changed_files', 'reconcile_index', 'changed_symbols_risk']) {
         assert(toolNames.includes(expected), `listTools should expose ${expected}`);
     }
     const saveMessageTool = tools.tools.find((tool: any) => tool.name === 'save_message');
@@ -241,6 +241,43 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
         symbol: 'calculateTotal'
     }));
     assert(activeDecisions.length === 1, 'get_decisions should find the active decision linked to a symbol');
+
+    const rankedSearch = parseToolJson<{ results: any[]; related_decisions: any[]; history_matches: any[] }>(await callTool('code_search', {
+        project_id: projectId,
+        query: 'calculateTotal',
+        limit: 3
+    }));
+    assert(rankedSearch.results[0].symbol.name === 'calculateTotal', 'code_search should rank the exact symbol first');
+    assert(rankedSearch.results[0].why_this_matched.includes('exact_symbol_match'), 'code_search should explain why a result matched');
+    assert(!JSON.stringify(rankedSearch).includes('return 1'), 'code_search should not leak symbol bodies');
+    assert(rankedSearch.related_decisions.some(decision => decision.summary.includes('billing total boundary')), 'code_search should include matching decisions');
+
+    const contextPacket = parseToolJson<any>(await callTool('read_context', {
+        project_id: projectId,
+        ref: lookup[0].ref,
+        include_body: false,
+        include_tests: false
+    }));
+    assert(contextPacket.target.name === 'calculateTotal' && !('body' in contextPacket.target), 'read_context should return target metadata without body by default');
+    assert(contextPacket.callers.probable.some((caller: any) => caller.qualified_name === 'checkout'), 'read_context should include likely callers');
+    assert(contextPacket.decisions.some((decision: any) => decision.summary.includes('billing total boundary')), 'read_context should include linked decisions');
+
+    const contextWithBody = parseToolJson<any>(await callTool('read_context', {
+        project_id: projectId,
+        ref: lookup[0].ref,
+        include_body: true,
+        include_tests: false
+    }));
+    assert(contextWithBody.target.body.includes('return 1'), 'read_context include_body=true should include the symbol body');
+
+    const impact = parseToolJson<any>(await callTool('impact_analysis', {
+        project_id: projectId,
+        ref: lookup[0].ref,
+        include_tests: false
+    }));
+    assert(impact.mode === 'target_symbol' && impact.target.name === 'calculateTotal', 'impact_analysis should analyze the requested symbol');
+    assert(impact.risk_level === 'medium', 'impact_analysis should raise risk when callers or decisions are linked');
+    assert(impact.related_decisions.some((decision: any) => decision.summary.includes('billing total boundary')), 'impact_analysis should include linked decisions');
 
     const context = parseToolJson<{ active_decisions: any[] }>(await callTool('context_since_last_session', {
         project_id: projectId

@@ -27,6 +27,14 @@ Discovery and body-read tools expose freshness metadata. `fresh` means the index
 | `reconcile_index` | Mark missing files as deleted and preserve symbol links across Git renames. |
 | `changed_symbols_risk` | Summarize symbols in Git changed files and linked decisions. |
 
+## Agent Context Tools
+
+| Tool | Purpose |
+| --- | --- |
+| `code_search` | Ranked compact discovery across symbols, matching decisions, and matching history. Each result includes `why_this_matched` and omits bodies. |
+| `read_context` | One focused symbol packet with target metadata, optional body, callers, decisions, recent history, and freshness. |
+| `impact_analysis` | Risk-oriented impact summary for a target symbol or current Git changes, including callers, linked decisions, freshness, and `why`. |
+
 ## Symbol Tools
 
 | Tool | Purpose |
@@ -54,7 +62,7 @@ Discovery and body-read tools expose freshness metadata. `fresh` means the index
 ## Recommended Discovery Pattern
 
 ```text
-search_symbols -> get_symbol_body -> find_callers -> get_decisions
+code_search -> read_context -> impact_analysis -> get_symbol_body when full source is needed
 ```
 
 Use normal shell commands for docs, config, JSON, CSS, fixtures, and broad non-symbol text.

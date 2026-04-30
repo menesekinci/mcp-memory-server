@@ -338,6 +338,9 @@ async function benchmarkLanguageDepth(): Promise<BenchmarkResult> {
     const pyBaseFile = path.join(projectPath, 'src', 'base.py');
     const pyMoneyFile = path.join(projectPath, 'src', 'billing', 'money.py');
     const pyInitFile = path.join(projectPath, 'src', '__init__.py');
+    const goModFile = path.join(projectPath, 'go.mod');
+    const goFile = path.join(projectPath, 'go', 'cart', 'cart.go');
+    const goPricingFile = path.join(projectPath, 'go', 'pricing', 'pricing.go');
 
     writeFile(jsFile, `
 export const calculateTotal = () => 100;
@@ -369,6 +372,37 @@ class RemoteBaseCalculator:
     writeFile(pyMoneyFile, `
 def round_money(value):
     return value
+`);
+    writeFile(goModFile, 'module example.com/shop\n\ngo 1.22\n');
+    writeFile(goPricingFile, `
+package pricing
+
+func Round(value int) int {
+    return value
+}
+`);
+    writeFile(goFile, `
+package cart
+
+import price "example.com/shop/go/pricing"
+
+type Calculator struct{}
+
+func CalculateTotal(value int) int {
+    return price.Round(value)
+}
+
+func CheckoutGo(value int) int {
+    return CalculateTotal(value)
+}
+
+func (c *Calculator) normalize(value int) int {
+    return value
+}
+
+func (c *Calculator) Total(value int) int {
+    return c.normalize(value)
+}
 `);
     writeFile(pyFile, `
 from .pricing import calculate_external_total as external_total
@@ -455,7 +489,13 @@ class UsesWorker:
               .get(projectId, 'super_total', pyBaseFile);
             const pyWorkerTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'run', pyPricingFile);
-            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget);
+            const goTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'CalculateTotal', goFile);
+            const goExternalTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'Round', goPricingFile);
+            const goMethodTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'Calculator.normalize', goFile);
+            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goMethodTarget);
         });
 
         const jsTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -478,6 +518,12 @@ class UsesWorker:
           .get(projectId, 'super_total', pyBaseFile) as { id: string };
         const pyWorkerTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'run', pyPricingFile) as { id: string };
+        const goTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'CalculateTotal', goFile) as { id: string };
+        const goExternalTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'Round', goPricingFile) as { id: string };
+        const goMethodTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'Calculator.normalize', goFile) as { id: string };
         const jsPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: jsTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyAsyncPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyAsyncTarget.id, min_confidence: 0.0 })).content[0].text);
@@ -488,6 +534,9 @@ class UsesWorker:
         const pyRemotePayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyRemoteTarget.id, min_confidence: 0.0 })).content[0].text);
         const pySuperPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pySuperTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyWorkerPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyWorkerTarget.id, min_confidence: 0.0 })).content[0].text);
+        const goPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: goTarget.id, min_confidence: 0.0 })).content[0].text);
+        const goExternalPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: goExternalTarget.id, min_confidence: 0.0 })).content[0].text);
+        const goMethodPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: goMethodTarget.id, min_confidence: 0.0 })).content[0].text);
         const jsCallers = jsPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyCallers = pyPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyAsyncCallers = pyAsyncPayload.definite_callers.map((caller: any) => caller.qualified_name);
@@ -498,10 +547,13 @@ class UsesWorker:
         const pyRemoteCallers = pyRemotePayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pySuperCallers = pySuperPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyWorkerCallers = pyWorkerPayload.definite_callers.map((caller: any) => caller.qualified_name);
+        const goCallers = goPayload.definite_callers.map((caller: any) => caller.qualified_name);
+        const goExternalCallers = goExternalPayload.definite_callers.map((caller: any) => caller.qualified_name);
+        const goMethodCallers = goMethodPayload.definite_callers.map((caller: any) => caller.qualified_name);
 
         return {
             name: 'language_depth_js_python_callers',
-            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python async: ${pyAsyncCallers.join(', ') || 'none'}; Python from/re-export: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}; Python instance-method: ${pyInstanceCallers.join(', ') || 'none'}; Python inherited-self: ${pyInheritedCallers.join(', ') || 'none'}; Python imported-base: ${pyRemoteCallers.join(', ') || 'none'}; Python super: ${pySuperCallers.join(', ') || 'none'}; Python self-attribute instance: ${pyWorkerCallers.join(', ') || 'none'}.`,
+            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python async: ${pyAsyncCallers.join(', ') || 'none'}; Python from/re-export: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}; Python instance-method: ${pyInstanceCallers.join(', ') || 'none'}; Python inherited-self: ${pyInheritedCallers.join(', ') || 'none'}; Python imported-base: ${pyRemoteCallers.join(', ') || 'none'}; Python super: ${pySuperCallers.join(', ') || 'none'}; Python self-attribute instance: ${pyWorkerCallers.join(', ') || 'none'}; Go same-package: ${goCallers.join(', ') || 'none'}; Go import: ${goExternalCallers.join(', ') || 'none'}; Go receiver-method: ${goMethodCallers.join(', ') || 'none'}.`,
             passed: jsCallers.includes('checkout')
                 && pyCallers.includes('checkout_py')
                 && pyAsyncCallers.includes('checkout_async_py')
@@ -514,6 +566,9 @@ class UsesWorker:
                 && pyRemoteCallers.includes('RemoteAdvancedCalculator.total')
                 && pySuperCallers.includes('SuperAdvancedCalculator.total')
                 && pyWorkerCallers.includes('UsesWorker.execute')
+                && goCallers.includes('CheckoutGo')
+                && goExternalCallers.includes('CalculateTotal')
+                && goMethodCallers.includes('Calculator.Total')
         };
     } finally {
         await watcher.close();

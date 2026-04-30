@@ -36,7 +36,7 @@ MCP client
 
 ## Indexing
 
-The indexer parses TypeScript, TSX, JavaScript, JSX, and Python files. It computes a Git-compatible blob SHA for each indexed file and skips unchanged files. Git changed-file indexing uses:
+The indexer parses TypeScript, TSX, JavaScript, JSX, Python, and Go files. It computes a Git-compatible blob SHA for each indexed file and skips unchanged files. Git changed-file indexing uses:
 
 ```text
 git diff --name-only HEAD
@@ -95,3 +95,12 @@ Python caller extraction currently supports:
 - Simple constructor-assigned instance method calls such as `service = Service()` or `self.service = Service()` followed by `service.run()` or `self.service.run()`.
 
 Fuzzy matching remains available for string-only mentions and broader probable caller fallback.
+
+Go caller extraction currently supports:
+
+- `func` symbols, `type` declarations, and receiver methods such as `func (c *Calculator) Total()`.
+- Same-package function calls.
+- `go.mod` module import resolution for package selector calls such as `price.Round()`.
+- Same-type receiver method calls such as `c.normalize()`.
+
+Go support is intentionally at the first semantic layer. Interface dispatch, embedded methods, build tags, generated files, and workspace-level multi-module resolution should be expanded after the core Go benchmarks and dogfooding stay stable.

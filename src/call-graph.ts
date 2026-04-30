@@ -26,6 +26,9 @@ export function extractCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[
     if (language === 'python') {
         return extractPythonCallReferences(tree, symbols, filePath);
     }
+    if (language === 'go') {
+        return extractGoCallReferences(tree, symbols, filePath);
+    }
 
     const calls: CallReference[] = [];
     const imports = extractImports(tree.rootNode, filePath);
@@ -166,6 +169,181 @@ type PythonImportMap = {
 type PythonObjectTypeMap = Map<string, { className: string; filePath: string }>;
 type PythonClassBaseMap = Map<string, Array<{ className: string; filePath: string }>>;
 type PythonClassMethodMap = Map<string, Set<string>>;
+type GoImportMap = Map<string, { importPath: string; packageDir?: string }>;
+type GoReceiverMap = Map<string, { receiverName: string; typeName: string }>;
+
+function extractGoCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[], filePath: string): CallReference[] {
+    const calls: CallReference[] = [];
+    const imports = extractGoImports(tree.rootNode, filePath);
+    const receivers = extractGoReceivers(tree.rootNode, symbols);
+
+    function traverse(node: Parser.SyntaxNode) {
+        if (node.type === 'call_expression') {
+            const callee = extractGoCallee(node);
+            const caller = findContainingSymbol(symbols, node.startPosition.row + 1);
+            if (callee && caller && (callee.memberName || callee.localName) !== caller.name) {
+                const imported = callee.memberName ? resolveGoImportedTarget(callee, imports) : null;
+                const receiverMethod = !imported && callee.memberName
+                    ? resolveGoReceiverMethod(callee, caller, receivers, filePath)
+                    : null;
+                calls.push({
+                    caller_symbol_id: caller.id,
+                    target_name: imported?.name || receiverMethod?.name || callee.memberName || callee.localName,
+                    target_qualified_name: receiverMethod?.qualifiedName,
+                    target_file_path: imported?.filePath || receiverMethod?.filePath,
+                    file_path: filePath,
+                    line: node.startPosition.row + 1,
+                    confidence: imported ? 0.94 : receiverMethod ? 0.93 : 0.9,
+                    resolution_method: imported?.method || receiverMethod?.method || 'ast_go_name'
+                });
+            }
+        }
+
+        for (let i = 0; i < node.namedChildCount; i++) {
+            traverse(node.namedChild(i));
+        }
+    }
+
+    traverse(tree.rootNode);
+    return calls;
+}
+
+function extractGoCallee(node: Parser.SyntaxNode): Callee | null {
+    const functionNode = node.childForFieldName('function') || node.namedChild(0);
+    if (!functionNode) return null;
+    if (functionNode.type === 'identifier') return { localName: functionNode.text };
+    if (functionNode.type === 'selector_expression') {
+        const identifiers = identifiersOf(functionNode);
+        if (identifiers.length >= 2) {
+            return {
+                localName: identifiers.slice(0, -1).map(identifier => identifier.text).join('.'),
+                memberName: identifiers[identifiers.length - 1].text
+            };
+        }
+    }
+    const lastIdentifier = findLastIdentifier(functionNode);
+    return lastIdentifier?.text ? { localName: lastIdentifier.text } : null;
+}
+
+function extractGoImports(root: Parser.SyntaxNode, filePath: string): GoImportMap {
+    const imports: GoImportMap = new Map();
+
+    function traverse(node: Parser.SyntaxNode) {
+        if (node.type === 'import_spec') {
+            const rawPath = node.text.match(/"([^"]+)"/)?.[1];
+            if (rawPath) {
+                const aliasNode = node.namedChildren.find(child => child.type === 'package_identifier');
+                const localName = aliasNode?.text || rawPath.split('/').slice(-1)[0];
+                imports.set(localName, {
+                    importPath: rawPath,
+                    packageDir: resolveGoPackageDir(filePath, rawPath) || undefined
+                });
+            }
+        }
+        for (let i = 0; i < node.namedChildCount; i++) {
+            traverse(node.namedChild(i));
+        }
+    }
+
+    traverse(root);
+    return imports;
+}
+
+function extractGoReceivers(root: Parser.SyntaxNode, symbols: IndexedSymbol[]): GoReceiverMap {
+    const receivers: GoReceiverMap = new Map();
+
+    function traverse(node: Parser.SyntaxNode) {
+        if (node.type === 'method_declaration') {
+            const caller = findContainingSymbol(symbols, node.startPosition.row + 1);
+            const receiver = node.childForFieldName('receiver');
+            const receiverName = receiver ? findFirstGoIdentifier(receiver)?.text : null;
+            const typeName = receiver ? findFirstGoTypeIdentifier(receiver)?.text : null;
+            if (caller?.qualified_name && receiverName && typeName) {
+                receivers.set(caller.qualified_name, { receiverName, typeName });
+            }
+        }
+        for (let i = 0; i < node.namedChildCount; i++) {
+            traverse(node.namedChild(i));
+        }
+    }
+
+    traverse(root);
+    return receivers;
+}
+
+function resolveGoImportedTarget(callee: Callee, imports: GoImportMap) {
+    if (!callee.memberName) return null;
+    const binding = imports.get(callee.localName);
+    if (!binding) return null;
+    return {
+        name: callee.memberName,
+        filePath: binding.packageDir ? findGoPackageSymbolFile(binding.packageDir, callee.memberName) : undefined,
+        method: 'ast_go_import'
+    };
+}
+
+function resolveGoReceiverMethod(callee: Callee, caller: IndexedSymbol, receivers: GoReceiverMap, filePath: string) {
+    if (!callee.memberName || !caller.qualified_name) return null;
+    const receiver = receivers.get(caller.qualified_name);
+    if (!receiver || receiver.receiverName !== callee.localName) return null;
+    return {
+        name: callee.memberName,
+        qualifiedName: `${receiver.typeName}.${callee.memberName}`,
+        filePath,
+        method: 'ast_go_receiver_method'
+    };
+}
+
+function resolveGoPackageDir(fromFilePath: string, importPath: string) {
+    const moduleRoot = findGoModuleRoot(path.dirname(fromFilePath));
+    if (!moduleRoot) return null;
+    const goMod = fs.readFileSync(path.join(moduleRoot, 'go.mod'), 'utf8');
+    const moduleName = goMod.match(/^module\s+(.+)$/m)?.[1]?.trim();
+    if (!moduleName || !importPath.startsWith(moduleName)) return null;
+    const relativePath = importPath.slice(moduleName.length).replace(/^\/+/, '');
+    const packageDir = path.join(moduleRoot, ...relativePath.split('/').filter(Boolean));
+    return fs.existsSync(packageDir) ? packageDir : null;
+}
+
+function findGoModuleRoot(startDir: string) {
+    let current = path.resolve(startDir);
+    while (true) {
+        if (fs.existsSync(path.join(current, 'go.mod'))) return current;
+        const parent = path.dirname(current);
+        if (parent === current) return null;
+        current = parent;
+    }
+}
+
+function findGoPackageSymbolFile(packageDir: string, symbolName: string) {
+    if (!fs.existsSync(packageDir)) return undefined;
+    for (const entry of fs.readdirSync(packageDir)) {
+        if (!entry.endsWith('.go') || entry.endsWith('_test.go')) continue;
+        const filePath = path.join(packageDir, entry);
+        const content = fs.readFileSync(filePath, 'utf8');
+        const pattern = new RegExp(`\\bfunc\\s+(?:\\([^)]*\\)\\s*)?${escapeRegex(symbolName)}\\s*\\(`);
+        if (pattern.test(content)) return filePath;
+    }
+    return undefined;
+}
+
+function findFirstGoIdentifier(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
+    if (node.type === 'identifier') return node;
+    for (let i = 0; i < node.namedChildCount; i++) {
+        const found = findFirstGoIdentifier(node.namedChild(i));
+        if (found) return found;
+    }
+    return null;
+}
+
+function findFirstGoTypeIdentifier(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
+    if (node.type === 'type_identifier') return node;
+    for (let i = 0; i < node.namedChildCount; i++) {
+        const found = findFirstGoTypeIdentifier(node.namedChild(i));
+        if (found) return found;
+    }
+    return null;
+}
 
 function extractCallee(node: Parser.SyntaxNode): Callee | null {
     const functionNode = node.childForFieldName('function') || node.namedChild(0);
@@ -981,7 +1159,7 @@ function hasLocalDeclarationBefore(node: Parser.SyntaxNode, name: string, callSt
 function identifiersOf(node: Parser.SyntaxNode) {
     const identifiers: Parser.SyntaxNode[] = [];
     function traverse(current: Parser.SyntaxNode) {
-        if (current.type === 'identifier' || current.type === 'property_identifier') {
+        if (current.type === 'identifier' || current.type === 'property_identifier' || current.type === 'field_identifier') {
             identifiers.push(current);
         }
         for (let i = 0; i < current.namedChildCount; i++) {

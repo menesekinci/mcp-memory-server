@@ -1008,6 +1008,9 @@ async function testLanguageDepth(db: TestDb, startIndexer: (projectPath: string,
     const pyBaseFile = path.join(projectPath, 'src', 'base.py');
     const pyMoneyFile = path.join(projectPath, 'src', 'billing', 'money.py');
     const pyInitFile = path.join(projectPath, 'src', '__init__.py');
+    const goModFile = path.join(projectPath, 'go.mod');
+    const goFile = path.join(projectPath, 'go', 'cart', 'cart.go');
+    const goPricingFile = path.join(projectPath, 'go', 'pricing', 'pricing.go');
 
     writeFile(jsFile, `
 export const calculateTotal = () => 100;
@@ -1054,6 +1057,37 @@ class RemoteBaseCalculator:
     writeFile(pyMoneyFile, `
 def round_money(value):
     return value
+`);
+    writeFile(goModFile, 'module example.com/shop\n\ngo 1.22\n');
+    writeFile(goPricingFile, `
+package pricing
+
+func Round(value int) int {
+    return value
+}
+`);
+    writeFile(goFile, `
+package cart
+
+import price "example.com/shop/go/pricing"
+
+type Calculator struct{}
+
+func CalculateTotal(value int) int {
+    return price.Round(value)
+}
+
+func CheckoutGo(value int) int {
+    return CalculateTotal(value)
+}
+
+func (c *Calculator) normalize(value int) int {
+    return value
+}
+
+func (c *Calculator) Total(value int) int {
+    return c.normalize(value)
+}
 `);
     writeFile(pyFile, `
 from .pricing import calculate_external_total as external_total
@@ -1149,7 +1183,13 @@ def mention_only_py():
               .get(projectId, 'super_total', pyBaseFile);
             const pyWorkerTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'run', pyPricingFile);
-            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget);
+            const goTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'CalculateTotal', goFile);
+            const goExternalTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'Round', goPricingFile);
+            const goMethodTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'Calculator.normalize', goFile);
+            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goMethodTarget);
         });
 
         const jsTarget = db.prepare("SELECT id, language FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -1247,6 +1287,31 @@ def mention_only_py():
             min_confidence: 0.0
         }));
         assert(pyWorkerCallers.definite_callers.some(c => c.qualified_name === 'UsesWorker.execute' && c.resolution_method === 'ast_python_instance_method'), 'Python self.attr constructor assignments should resolve instance method callers');
+
+        const goTarget = db.prepare("SELECT id, language FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'CalculateTotal', goFile) as { id: string; language: string } | undefined;
+        assert(goTarget?.language === 'go', 'Go functions should be indexed as symbols');
+        const goCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: goTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(goCallers.definite_callers.some(c => c.qualified_name === 'CheckoutGo' && c.resolution_method === 'ast_go_name'), 'Go same-package function calls should resolve callers');
+
+        const goExternalTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'Round', goPricingFile) as { id: string } | undefined;
+        const goExternalCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: goExternalTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(goExternalCallers.definite_callers.some(c => c.qualified_name === 'CalculateTotal' && c.resolution_method === 'ast_go_import'), 'Go module import aliases should resolve cross-package function callers');
+
+        const goMethodTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'Calculator.normalize', goFile) as { id: string } | undefined;
+        const goMethodCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: goMethodTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(goMethodCallers.definite_callers.some(c => c.qualified_name === 'Calculator.Total' && c.resolution_method === 'ast_go_receiver_method'), 'Go receiver method calls should resolve same-type method callers');
     } finally {
         await watcher.close();
     }

@@ -18,10 +18,11 @@ const repos: RepoCase[] = [
     { name: 'requests', url: 'https://github.com/psf/requests.git', queryHint: 'Session' },
     { name: 'flask', url: 'https://github.com/pallets/flask.git', queryHint: 'Flask' },
     { name: 'axios', url: 'https://github.com/axios/axios.git', queryHint: 'Axios' },
-    { name: 'p-limit', url: 'https://github.com/sindresorhus/p-limit.git', queryHint: 'pLimit' }
+    { name: 'p-limit', url: 'https://github.com/sindresorhus/p-limit.git', queryHint: 'pLimit' },
+    { name: 'cobra', url: 'https://github.com/spf13/cobra.git', queryHint: 'Command' }
 ];
 
-const supportedSource = /\.(ts|tsx|js|jsx|py)$/;
+const supportedSource = /\.(ts|tsx|js|jsx|py|go)$/;
 const ignored = /(^|[\/\\])(\.git|node_modules|dist|build|coverage|docs\/_build|site-packages)([\/\\]|$)/;
 
 let db: any;

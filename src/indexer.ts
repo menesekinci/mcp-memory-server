@@ -2,6 +2,7 @@ import Parser from 'tree-sitter';
 import TypeScript from 'tree-sitter-typescript';
 import Python from 'tree-sitter-python';
 import JavaScript from 'tree-sitter-javascript';
+import Go from 'tree-sitter-go';
 import chokidar from 'chokidar';
 import fs from 'fs';
 import path from 'path';
@@ -18,6 +19,7 @@ const LANGUAGES = {
     '.js': { language: JavaScript as any, name: 'javascript' },
     '.jsx': { language: JavaScript as any, name: 'javascript' },
     '.py': { language: Python as any, name: 'python' },
+    '.go': { language: Go as any, name: 'go' },
 };
 
 const IGNORED_PATH_PATTERN = /(^|[\/\\])(\.git|node_modules|dist|build|coverage)([\/\\]|$)/;
@@ -144,7 +146,7 @@ export async function indexFile(filePath: string, projectId = 'default', options
         const tree = parseContent(parser, content);
         const symbols = extractSymbols(tree, content, filePath, langConfig.name, projectId);
         const shouldStoreBodies = bodyStorageEnabled();
-        const callReferences = ['typescript', 'javascript', 'python'].includes(langConfig.name)
+        const callReferences = ['typescript', 'javascript', 'python', 'go'].includes(langConfig.name)
             ? extractCallReferences(tree, symbols, filePath, langConfig.name)
             : [];
 
@@ -696,11 +698,52 @@ function extractSymbols(tree: Parser.Tree, content: string, filePath: string, la
                     pushesScope = true;
                 }
             }
+        } else if (language === 'go') {
+            if (node.type === 'function_declaration') {
+                const nameNode = node.childForFieldName('name');
+                if (nameNode) {
+                    symbol = {
+                        name: nameNode.text,
+                        kind: 'function',
+                        start_line: node.startPosition.row + 1,
+                        end_line: node.endPosition.row + 1,
+                        signature: signatureBeforeBody(node, content),
+                        body: node.text
+                    };
+                }
+            } else if (node.type === 'method_declaration') {
+                const nameNode = node.childForFieldName('name');
+                const receiverType = goReceiverTypeName(node);
+                if (nameNode) {
+                    symbol = {
+                        name: nameNode.text,
+                        qualified_name: receiverType ? `${receiverType}.${nameNode.text}` : nameNode.text,
+                        kind: 'method',
+                        start_line: node.startPosition.row + 1,
+                        end_line: node.endPosition.row + 1,
+                        signature: signatureBeforeBody(node, content),
+                        body: node.text
+                    };
+                }
+            } else if (node.type === 'type_spec') {
+                const nameNode = node.childForFieldName('name');
+                if (nameNode) {
+                    symbol = {
+                        name: nameNode.text,
+                        kind: 'class',
+                        start_line: node.startPosition.row + 1,
+                        end_line: node.endPosition.row + 1,
+                        signature: `type ${nameNode.text}`,
+                        body: node.text
+                    };
+                    pushesScope = true;
+                }
+            }
         }
 
         let childScope = scope;
         if (symbol) {
-            const qualifiedName = scope.length > 0 ? `${scope.join('.')}.${symbol.name}` : symbol.name;
+            const qualifiedName = symbol.qualified_name || (scope.length > 0 ? `${scope.join('.')}.${symbol.name}` : symbol.name);
             const id = `${projectId}:${filePath}:${symbol.kind}:${qualifiedName}`;
             symbols.push({
                 id,
@@ -727,6 +770,22 @@ function extractSymbols(tree: Parser.Tree, content: string, filePath: string, la
 }
 
 export { extractSymbols };
+
+function goReceiverTypeName(node: Parser.SyntaxNode) {
+    const receiver = node.childForFieldName('receiver');
+    if (!receiver) return null;
+    const typeNode = findFirstNodeOfType(receiver, 'type_identifier');
+    return typeNode?.text || null;
+}
+
+function findFirstNodeOfType(node: Parser.SyntaxNode, type: string): Parser.SyntaxNode | null {
+    if (node.type === type) return node;
+    for (let i = 0; i < node.namedChildCount; i++) {
+        const found = findFirstNodeOfType(node.namedChild(i), type);
+        if (found) return found;
+    }
+    return null;
+}
 
 function parseContent(parser: Parser, content: string) {
     return parser.parse((index) => {

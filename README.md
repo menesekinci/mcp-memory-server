@@ -4,7 +4,7 @@
 
 Symbol-aware MCP memory server for Codex and coding agents.
 
-It indexes TypeScript, TSX, JavaScript, JSX, and Python projects with tree-sitter, stores symbol metadata in SQLite, and exposes compact MCP tools for low-token project discovery. The current implementation is TS/JS-first for caller precision, including imports, barrel re-exports, selective TypeScript compiler API symbol resolution, simple instance method calls, and TSX/JSX component usage. Python supports symbol discovery, async functions, same-file calls, relative/module import calls, dotted module imports, package `__init__.py` re-exports, `self.method()` calls, same-file and imported-base inherited `self.method()` calls, `super().method()` calls, and local or `self.attr` constructor-assigned instance method calls.
+It indexes TypeScript, TSX, JavaScript, JSX, Python, and Go projects with tree-sitter, stores symbol metadata in SQLite, and exposes compact MCP tools for low-token project discovery. The current implementation is TS/JS-first for caller precision, including imports, barrel re-exports, selective TypeScript compiler API symbol resolution, simple instance method calls, and TSX/JSX component usage. Python supports symbol discovery, async functions, same-file calls, relative/module import calls, dotted module imports, package `__init__.py` re-exports, `self.method()` calls, same-file and imported-base inherited `self.method()` calls, `super().method()` calls, and local or `self.attr` constructor-assigned instance method calls. Go support starts with functions, structs, receiver methods, same-package calls, `go.mod` module import calls, and receiver method calls.
 
 ## Why
 

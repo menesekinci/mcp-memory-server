@@ -2,6 +2,8 @@
 
 Discovery tools return compact results by default. Use `get_symbol_body` only after a compact result identifies the relevant symbol.
 
+Discovery and body-read tools expose freshness metadata. `fresh` means the indexed file hash matches the current working tree. `stale` means the working tree differs from the indexed hash or the file is missing. `excluded` means the file was intentionally skipped, and `unknown` means the server does not have enough path/hash information to prove freshness.
+
 ## Compact Symbol Shape
 
 ```json
@@ -11,7 +13,8 @@ Discovery tools return compact results by default. Use `get_symbol_body` only af
   "kind": "function",
   "file": "src/server.ts",
   "lines": "225-530",
-  "sig": "async function callTool(...)"
+  "sig": "async function callTool(...)",
+  "freshness": "fresh"
 }
 ```
 
@@ -19,7 +22,7 @@ Discovery tools return compact results by default. Use `get_symbol_body` only af
 
 | Tool | Purpose |
 | --- | --- |
-| `index_status` | Count active, deleted, indexed, hashed, and excluded records. |
+| `index_status` | Count active, deleted, indexed, hashed, and excluded records, and report project freshness when `project_path` or `PROJECT_PATH` is available. |
 | `reindex_changed_files` | Re-index Git changed, staged, and untracked source files. |
 | `reconcile_index` | Mark missing files as deleted and preserve symbol links across Git renames. |
 | `changed_symbols_risk` | Summarize symbols in Git changed files and linked decisions. |
@@ -30,7 +33,7 @@ Discovery tools return compact results by default. Use `get_symbol_body` only af
 | --- | --- |
 | `search_symbols` | Search compact symbol metadata by partial name, kind, or file. |
 | `lookup_symbol` | Exact-name symbol lookup. Compact by default. |
-| `get_symbol_body` | Read full body by `symbol_id` or compact `ref`. |
+| `get_symbol_body` | Read full body by `symbol_id` or compact `ref`, including file freshness metadata. |
 | `find_callers` | Return AST definite callers and fuzzy probable callers. |
 | `changed_since` | List symbols changed since a timestamp. |
 | `get_symbol_history` | Read git-derived symbol history. |

@@ -10,7 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import { resolveSymbolReferences } from "./symbol-resolver";
 import { CountRow, DecisionRow, MessageRow, SessionRow, SymbolReference, SymbolRow } from "./types";
-import { listChangedSourceFiles, reindexChangedFiles, reconcileProjectFiles } from "./indexer";
+import { getFileFreshness, getProjectIndexHealth, listChangedSourceFiles, reindexChangedFiles, reconcileProjectFiles } from "./indexer";
 import { symbolRef } from "./refs";
 
 const server = new Server(
@@ -109,11 +109,12 @@ export async function listTools() {
       },
       {
         name: "index_status",
-        description: "Get the current indexing status",
+        description: "Get the current indexing status and freshness health when project_path is available",
         inputSchema: {
           type: "object",
           properties: {
-            project_id: { type: "string", default: "default" }
+            project_id: { type: "string", default: "default" },
+            project_path: { type: "string" }
           },
           required: ["project_id"],
         },
@@ -298,13 +299,16 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
 
   if (name === "get_symbol_body") {
     const symbolId = args.symbol_id || resolveSymbolIdFromRef(args.ref, args.project_id || 'default');
-    const symbol = db.prepare("SELECT id, name, qualified_name, file_path, start_line, end_line, language, body FROM symbols WHERE id = ? AND is_deleted = 0")
-      .get(symbolId) as Pick<SymbolRow, 'id' | 'name' | 'qualified_name' | 'file_path' | 'start_line' | 'end_line' | 'language' | 'body'> | undefined;
+    const symbol = db.prepare("SELECT id, project_id, name, qualified_name, file_path, start_line, end_line, language, body FROM symbols WHERE id = ? AND is_deleted = 0")
+      .get(symbolId) as Pick<SymbolRow, 'id' | 'project_id' | 'name' | 'qualified_name' | 'file_path' | 'start_line' | 'end_line' | 'language' | 'body'> | undefined;
     if (!symbol) {
       return { content: [{ type: "text", text: "Symbol not found." }] };
     }
     return {
-      content: [{ type: "text", text: JSON.stringify(symbol) }],
+      content: [{ type: "text", text: JSON.stringify({
+        ...symbol,
+        freshness: getFileFreshness(symbol.file_path, symbol.project_id)
+      }) }],
     };
   }
 
@@ -409,13 +413,24 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
 
   if (name === "index_status") {
     const projectName = args.project_id || 'default';
+    const projectPath = args.project_path || process.env.PROJECT_PATH;
     const total = (db.prepare("SELECT COUNT(*) as count FROM symbols WHERE project_id = ? AND is_deleted = 0").get(projectName) as CountRow | undefined)?.count || 0;
     const deleted = (db.prepare("SELECT COUNT(*) as count FROM symbols WHERE project_id = ? AND is_deleted = 1").get(projectName) as CountRow | undefined)?.count || 0;
     const excluded = (db.prepare("SELECT count(*) as count FROM files WHERE project_id = ? AND is_excluded = 1").get(projectName) as CountRow | undefined)?.count || 0;
     const files = (db.prepare("SELECT count(*) as count FROM files WHERE project_id = ?").get(projectName) as CountRow | undefined)?.count || 0;
     const hashed = (db.prepare("SELECT count(*) as count FROM files WHERE project_id = ? AND git_blob_sha IS NOT NULL").get(projectName) as CountRow | undefined)?.count || 0;
+    const health = getProjectIndexHealth(projectPath, projectName);
     return {
-      content: [{ type: "text", text: JSON.stringify({ status: 'ready', total_symbols: total, deleted_symbols: deleted, indexed_files: files, hashed_files: hashed, excluded_files: excluded }) }],
+      content: [{ type: "text", text: JSON.stringify({
+        status: 'ready',
+        freshness: health.freshness,
+        total_symbols: total,
+        deleted_symbols: deleted,
+        indexed_files: files,
+        hashed_files: hashed,
+        excluded_files: excluded,
+        health
+      }) }],
     };
   }
 
@@ -668,6 +683,7 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
 
 function formatSymbol(symbol: SymbolRow, options: { includeBody: boolean; verbose: boolean }) {
   const ref = symbol.ref || symbolRef(symbol.id);
+  const freshness = getFileFreshness(symbol.file_path, symbol.project_id);
   if (!options.verbose) {
     return {
       ref,
@@ -675,7 +691,8 @@ function formatSymbol(symbol: SymbolRow, options: { includeBody: boolean; verbos
       kind: symbol.kind,
       file: relativeDisplayPath(symbol.file_path),
       lines: `${symbol.start_line}-${symbol.end_line}`,
-      sig: compactSignature(symbol.signature)
+      sig: compactSignature(symbol.signature),
+      freshness: freshness.freshness
     };
   }
 
@@ -692,6 +709,7 @@ function formatSymbol(symbol: SymbolRow, options: { includeBody: boolean; verbos
     signature: symbol.signature,
     language: symbol.language,
     updated_at: symbol.updated_at,
+    freshness,
     ...(options.includeBody ? { body: symbol.body } : {})
   };
 }

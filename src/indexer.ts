@@ -228,6 +228,109 @@ export function listChangedSourceFiles(projectPath: string) {
         .filter(file => !isIgnoredProjectPath(file) && isSupportedSourceFile(file)))];
 }
 
+export type FileFreshness = {
+    freshness: 'fresh' | 'stale' | 'excluded' | 'unknown';
+    reason: string;
+    indexed_at?: number;
+    git_blob_sha?: string | null;
+    working_tree_blob_sha?: string | null;
+};
+
+export function getFileFreshness(filePath: string, projectId = 'default'): FileFreshness {
+    const row = db.prepare("SELECT git_blob_sha, last_indexed_at, is_excluded FROM files WHERE project_id = ? AND path = ?")
+      .get(projectId, filePath) as { git_blob_sha: string | null; last_indexed_at: number; is_excluded: number } | undefined;
+    if (!row) {
+        return { freshness: 'unknown', reason: 'file_not_tracked' };
+    }
+    if (row.is_excluded) {
+        return { freshness: 'excluded', reason: 'file_excluded', indexed_at: row.last_indexed_at, git_blob_sha: row.git_blob_sha };
+    }
+    if (!fs.existsSync(filePath)) {
+        return { freshness: 'stale', reason: 'file_missing', indexed_at: row.last_indexed_at, git_blob_sha: row.git_blob_sha };
+    }
+    if (!row.git_blob_sha) {
+        return { freshness: 'unknown', reason: 'missing_index_hash', indexed_at: row.last_indexed_at };
+    }
+    const workingTreeBlobSha = gitBlobSha(fs.readFileSync(filePath, 'utf8'));
+    return {
+        freshness: workingTreeBlobSha === row.git_blob_sha ? 'fresh' : 'stale',
+        reason: workingTreeBlobSha === row.git_blob_sha ? 'hash_match' : 'hash_mismatch',
+        indexed_at: row.last_indexed_at,
+        git_blob_sha: row.git_blob_sha,
+        working_tree_blob_sha: workingTreeBlobSha
+    };
+}
+
+export function getProjectIndexHealth(projectPath: string | undefined, projectId = 'default') {
+    const checkedAt = Date.now();
+    if (!projectPath) {
+        return {
+            freshness: 'unknown',
+            reason: 'project_path_not_provided',
+            checked_at: checkedAt
+        };
+    }
+    const root = path.resolve(projectPath);
+    if (!fs.existsSync(root)) {
+        return {
+            freshness: 'unknown',
+            reason: 'project_path_missing',
+            project_path: root,
+            checked_at: checkedAt
+        };
+    }
+
+    const sourceFiles = collectSupportedSourceFiles(root);
+    const sourceSet = new Set(sourceFiles.map(file => path.resolve(file)));
+    const trackedRows = db.prepare("SELECT path, git_blob_sha, is_excluded FROM files WHERE project_id = ?")
+      .all(projectId) as Array<{ path: string; git_blob_sha: string | null; is_excluded: number }>;
+    const trackedUnderRoot = trackedRows.filter(row => path.resolve(row.path).startsWith(root));
+    const trackedSet = new Set(trackedUnderRoot.map(row => path.resolve(row.path)));
+
+    const stalePaths: string[] = [];
+    const missingPaths: string[] = [];
+    const unindexedPaths: string[] = [];
+    let freshFiles = 0;
+    let excludedFiles = 0;
+
+    for (const row of trackedUnderRoot) {
+        if (row.is_excluded) {
+            excludedFiles++;
+            continue;
+        }
+        const freshness = getFileFreshness(row.path, projectId);
+        if (freshness.freshness === 'fresh') freshFiles++;
+        else if (freshness.reason === 'file_missing') missingPaths.push(row.path);
+        else if (freshness.freshness === 'stale') stalePaths.push(row.path);
+    }
+
+    for (const sourceFile of sourceFiles) {
+        if (!trackedSet.has(path.resolve(sourceFile))) {
+            unindexedPaths.push(sourceFile);
+        }
+    }
+
+    const freshness = stalePaths.length === 0 && missingPaths.length === 0 && unindexedPaths.length === 0
+        ? 'fresh'
+        : 'stale';
+    return {
+        freshness,
+        reason: freshness === 'fresh' ? 'all_tracked_source_files_match' : 'index_differs_from_working_tree',
+        project_path: root,
+        checked_at: checkedAt,
+        source_files: sourceFiles.length,
+        tracked_files: trackedUnderRoot.length,
+        fresh_files: freshFiles,
+        excluded_files: excludedFiles,
+        stale_files: stalePaths.length,
+        missing_files: missingPaths.length,
+        unindexed_files: unindexedPaths.length,
+        stale_paths: stalePaths.slice(0, 20).map(file => path.relative(root, file).replace(/\\/g, '/')),
+        missing_paths: missingPaths.slice(0, 20).map(file => path.relative(root, file).replace(/\\/g, '/')),
+        unindexed_paths: unindexedPaths.slice(0, 20).map(file => path.relative(root, file).replace(/\\/g, '/'))
+    };
+}
+
 export async function reconcileProjectFiles(projectPath: string, projectId = 'default') {
     const renames = reconcileRenamedFiles(projectPath, projectId);
     const rows = db.prepare("SELECT path, git_blob_sha FROM files WHERE project_id = ?").all(projectId) as Array<{ path: string; git_blob_sha: string | null }>;
@@ -336,7 +439,7 @@ function gitChangedFiles(projectPath: string) {
 
     for (const args of commands) {
         try {
-            const output = execFileSync('git', ['-C', projectPath, ...args], { encoding: 'utf8' });
+            const output = execFileSync('git', ['-C', projectPath, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
             output.split(/\r?\n/).filter(Boolean).forEach(file => files.add(file));
         } catch {
             // Non-git projects still work through chokidar; this helper simply has no changed files.
@@ -355,7 +458,7 @@ function gitRenamedFiles(projectPath: string) {
 
     for (const args of commands) {
         try {
-            const output = execFileSync('git', ['-C', projectPath, ...args], { encoding: 'utf8' });
+            const output = execFileSync('git', ['-C', projectPath, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
             for (const line of output.split(/\r?\n/).filter(Boolean)) {
                 const [status, oldRelative, newRelative] = line.split(/\t/);
                 if (!status?.startsWith('R') || !oldRelative || !newRelative) continue;

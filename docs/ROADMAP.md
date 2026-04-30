@@ -2,6 +2,8 @@
 
 This roadmap keeps the project focused. Each phase should improve either measured usefulness, caller accuracy, or agent adoption.
 
+See also [Product Vision](VISION.md) and [v1.0 Criteria](V1_CRITERIA.md). The current strategic direction is to turn the working MCP server into a freshness-aware, low-noise, high-trust context layer for agents.
+
 ## Phase 0 - Published Core
 
 - [x] SQLite-backed symbol memory.
@@ -77,3 +79,31 @@ This roadmap keeps the project focused. Each phase should improve either measure
 - [x] Add lightweight TypeScript constructor/type-annotation instance method resolution.
 - [x] Add TSX/JSX component usage graph.
 - [x] Add TypeScript compiler API based type-aware resolution.
+
+## Phase 9 - Freshness And Trust Contract
+
+- [x] Add project-level freshness reporting to `index_status`.
+- [x] Add per-symbol freshness metadata to discovery and body reads.
+- [x] Surface stale, missing, unindexed, and excluded files in machine-readable output.
+- [x] Add stale detection tests before and after reindex/reconcile.
+- [x] Document freshness semantics in tools and architecture docs.
+
+## Phase 10 - Agent-Facing Context Layer
+
+- [ ] Design a small high-level tool surface over existing low-level tools.
+- [ ] Add ranked `code_search` with `why_this_matched`.
+- [ ] Add `read_context` packets for body, callers, tests, decisions, and risk.
+- [ ] Add `impact_analysis` for review/refactor/regression flows.
+- [ ] Keep compact token budgets as first-class inputs.
+
+## Phase 11 - Memory Quality
+
+- [ ] Add stale/needs-review decision semantics tied to changed symbols.
+- [ ] Distinguish current decisions from historical context in memory reads.
+- [ ] Add memory conflict and supersession tests.
+
+## Phase 12 - Real Repository Proof
+
+- [ ] Dogfood on at least five real repositories.
+- [ ] Record token savings, files read, body reads, stale result rate, false positives, and task success.
+- [ ] Convert dogfooding findings into tests, docs, or tool contract changes.

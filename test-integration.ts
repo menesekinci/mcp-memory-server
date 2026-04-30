@@ -156,6 +156,7 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
         symbol_id: symbolId
     }));
     assert(symbolBody.body.includes('calculateTotal'), 'get_symbol_body should return the full symbol body');
+    assert(symbolBody.freshness?.freshness === 'unknown', 'get_symbol_body should include freshness metadata even for manually inserted legacy symbols');
 
     const symbolBodyByRef = parseToolJson<any>(await callTool('get_symbol_body', {
         project_id: projectId,
@@ -576,8 +577,12 @@ async function testIndexerEdges(db: TestDb, startIndexer: (projectPath: string, 
             return Boolean(row);
         });
 
-        const excluded = parseToolJson<{ excluded_files: number }>(await callTool('index_status', { project_id: projectA }));
+        const excluded = parseToolJson<{ excluded_files: number; freshness: string; health: any }>(await callTool('index_status', {
+            project_id: projectA,
+            project_path: projectPath
+        }));
         assert(excluded.excluded_files === 1, 'index_status should count secret files as excluded');
+        assert(excluded.freshness === 'fresh' && excluded.health.stale_files === 0, 'index_status should report a fresh index when tracked files match the working tree');
 
         writeFile(path.join(projectPath, 'src', 'other.ts'), 'export function calculateTotal() { return 200; }\n');
         await waitFor(() => {
@@ -615,6 +620,35 @@ export class BillingService {
             ref: scopedMethods[0].ref
         }));
         assert(scopedBody.qualified_name === 'BillingService.run' && scopedBody.body.includes('billing'), 'get_symbol_body should resolve indexed refs without scanning all symbols');
+        assert(scopedBody.freshness?.freshness === 'fresh', 'indexed symbol bodies should report fresh when file hashes match');
+
+        writeFile(scopedFile, `
+export class UserService {
+  run() {
+    return "user";
+  }
+}
+
+export class BillingService {
+  run() {
+    return "billing-updated";
+  }
+}
+`);
+        const staleStatus = parseToolJson<{ freshness: string; health: any }>(await callTool('index_status', {
+            project_id: projectA,
+            project_path: projectPath
+        }));
+        assert(staleStatus.freshness === 'stale' && staleStatus.health.stale_files >= 1, 'index_status should detect working-tree changes before the index catches up');
+        await callTool('reconcile_index', {
+            project_id: projectA,
+            project_path: projectPath
+        });
+        const freshAgain = parseToolJson<{ freshness: string; health: any }>(await callTool('index_status', {
+            project_id: projectA,
+            project_path: projectPath
+        }));
+        assert(freshAgain.freshness === 'fresh' && freshAgain.health.stale_files === 0, 'reconcile_index should restore fresh index health after stale detection');
 
         const projectBResult = parseToolJson<any[]>(await callTool('lookup_symbol', {
             project_id: projectB,

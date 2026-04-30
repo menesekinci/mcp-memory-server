@@ -37,10 +37,10 @@ benchmark/results/latest.md
 The current measured discovery task is: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=4593
-mcp_tokens=45
-savings=99.0%
-smaller_output=102.1x
+classic_tokens=4698
+mcp_tokens=50
+savings=98.9%
+smaller_output=94.0x
 ```
 
 Token counts are practical estimates using `characters / 4`. The benchmark measures discovery output size, not final answer quality.

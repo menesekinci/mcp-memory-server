@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-04-29T23:31:06.265Z",
+  "generated_at": "2026-04-30T01:03:31.908Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
-      "classic_chars": 18369,
-      "classic_tokens": 4593,
-      "mcp_chars": 180,
-      "mcp_tokens": 45,
-      "token_savings_pct": 99,
+      "classic_chars": 18791,
+      "classic_tokens": 4698,
+      "mcp_chars": 200,
+      "mcp_tokens": 50,
+      "token_savings_pct": 98.9,
       "notes": "Find the callTool symbol with broad text search versus compact MCP symbol search.",
       "passed": true
     },
@@ -40,9 +40,9 @@
       "name": "bugfix_investigation_narrowing",
       "classic_chars": 6290,
       "classic_tokens": 1573,
-      "mcp_chars": 1306,
-      "mcp_tokens": 327,
-      "token_savings_pct": 79.2,
+      "mcp_chars": 1406,
+      "mcp_tokens": 352,
+      "token_savings_pct": 77.6,
       "notes": "Narrow a noisy discount regression from broad text matches to compact symbol, history, and decision context.",
       "passed": true
     },
@@ -50,9 +50,9 @@
       "name": "task_success_bugfix_root_symbol",
       "classic_chars": 2613,
       "classic_tokens": 654,
-      "mcp_chars": 338,
-      "mcp_tokens": 85,
-      "token_savings_pct": 87,
+      "mcp_chars": 358,
+      "mcp_tokens": 90,
+      "token_savings_pct": 86.2,
       "notes": "Root symbol selected: true; classic files read: 16; MCP bodies read: 0.",
       "passed": true
     },
@@ -75,20 +75,20 @@
       "name": "task_success_discovery_workload",
       "classic_chars": 2869,
       "classic_tokens": 718,
-      "mcp_chars": 605,
-      "mcp_tokens": 152,
-      "token_savings_pct": 78.8,
+      "mcp_chars": 867,
+      "mcp_tokens": 217,
+      "token_savings_pct": 69.8,
       "notes": "Classic files read: 20; MCP bodies read: 1; classic false-positive files: 19.",
       "passed": true
     },
     {
       "name": "performance_scale_10k_symbols",
-      "notes": "Cold index: 5432ms for 1000 files/10001 symbols; search: 4.7ms; caller: 2.4ms; incremental: 163.9ms for 1 changed file; risk: 136.4ms for 26 changed files; db: 8.1MB.",
+      "notes": "Cold index: 5406ms for 1000 files/10001 symbols; search: 3.9ms; caller: 2ms; incremental: 157.1ms for 1 changed file; risk: 217.5ms for 26 changed files; db: 8.1MB.",
       "passed": true
     },
     {
       "name": "performance_monorepo_workspace",
-      "notes": "Cold index: 3569ms for 20 packages/800 files/4801 symbols; search: 2ms; caller: 1ms; incremental: 198.1ms for 1 changed file; risk: 124.9ms for 6 changed files; db: 12.4MB.",
+      "notes": "Cold index: 3553ms for 20 packages/800 files/4801 symbols; search: 2.2ms; caller: 1.1ms; incremental: 214.5ms for 1 changed file; risk: 138ms for 6 changed files; db: 12.4MB.",
       "passed": true
     }
   ]

@@ -48,6 +48,17 @@ Rename reconciliation uses Git rename detection and preserves symbol links acros
 
 Indexed symbol IDs include project, file, kind, and scoped `qualified_name`. This keeps same-file same-name class methods such as `UserService.run` and `BillingService.run` distinct. Compact refs are stored in SQLite and indexed by `(project_id, ref)` so body lookup can resolve refs directly, with a legacy hash fallback for older rows.
 
+## Freshness Contract
+
+The `files.git_blob_sha` value is a Git-compatible blob hash of the indexed file content. When a project path is available, `index_status` compares those stored hashes against the current working tree and reports `fresh`, `stale`, or `unknown` health. Symbol discovery returns compact per-symbol freshness, and `get_symbol_body` returns full freshness metadata with the body. This is the first guardrail against silent stale context.
+
+Freshness values:
+
+- `fresh`: indexed hash matches the working tree.
+- `stale`: file content differs from the indexed hash or the file is missing.
+- `excluded`: file was intentionally skipped by path or secret filters.
+- `unknown`: the server cannot prove freshness, usually because no project path or file hash is available.
+
 ## Session Memory
 
 `save_message` writes to `messages` and `messages_fts`, then links explicit and inferred symbols through `message_symbol_references`. If callers omit `session_id`, or pass an unknown session ID, the server creates a session in the target project before inserting the message. Agents should still pass stable session IDs for long work sessions when they want future context to group cleanly.

@@ -22,10 +22,10 @@ Agents often spend a lot of tokens finding the right file or function before rea
 Current benchmark task: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=4236
-mcp_tokens=45
+classic_tokens=4698
+mcp_tokens=50
 savings=98.9%
-smaller_output=94.1x
+smaller_output=94.0x
 ```
 
 Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
@@ -101,6 +101,8 @@ See [docs/agent-flows.md](docs/agent-flows.md) and [AGENTS.md](AGENTS.md) for ta
 - [Benchmarks](docs/benchmarks.md)
 - [Agent Flows](docs/agent-flows.md)
 - [Architecture](docs/architecture.md)
+- [Product Vision](docs/VISION.md)
+- [v1.0 Criteria](docs/V1_CRITERIA.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Demo Transcript](docs/demo.md)
 - [Plugin Polish](docs/plugin.md)
@@ -145,6 +147,7 @@ npm publish --access public
 
 - This is a symbol memory/indexing server, not a replacement for source inspection.
 - Compact outputs intentionally omit full code bodies to reduce token use during discovery.
+- Discovery results and body reads expose freshness metadata so stale index state is visible instead of silent.
 - Full source remains available through `get_symbol_body`.
 - `find_callers` returns AST definite callers and fuzzy probable callers.
 - v0.4.x development is focused on v1.0 hardening: real-repository validation, stronger tool contracts, performance stability, setup verification, and release discipline.

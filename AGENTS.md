@@ -33,6 +33,7 @@ The project is not meant to replace source inspection. It is meant to make the d
 - Indexing and Git reconciliation behavior: `src/indexer.ts`.
 - Call graph behavior: `src/call-graph.ts`.
 - Architecture overview: `docs/architecture.md`.
+- Product direction: `docs/VISION.md` and `docs/V1_CRITERIA.md`.
 - Release process: `docs/release.md`.
 
 ## Known Sharp Edges
@@ -131,6 +132,8 @@ When an item is completed, move its concrete result into Completed Validation No
 - Ubuntu CI coverage now waits for every AST call-graph fixture symbol before assertions, removing a platform-specific watcher ordering race where imported targets could be checked before indexing finished.
 - Benchmark CI now uses a longer symbol-index wait window so slower macOS runners do not fail benchmark scenarios before watcher-driven indexing completes.
 - v0.4.2 hardening corrected AGENTS/README version drift, made MCP server metadata read from `package.json`, added auto-created sessions for `save_message`, stores compact refs in SQLite for indexed lookups, and scopes symbol identity by qualified name so same-file same-name methods do not overwrite each other.
+- Product vision and v1.0 criteria were formalized around freshness, compact ranked context, small agent-facing tools, memory quality, real-repository validation, privacy controls, and setup/doctor polish.
+- P0 freshness contract now exposes project-level index health, per-symbol freshness metadata, stale/missing/unindexed/excluded counts, and stale-before/reconcile-after test coverage so agents can detect stale working-tree changes before trusting compact discovery results.
 
 ## Verification
 

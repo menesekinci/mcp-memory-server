@@ -22,10 +22,10 @@ Agents often spend a lot of tokens finding the right file or function before rea
 Current benchmark task: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=5194
+classic_tokens=5325
 mcp_tokens=50
-savings=99.0%
-smaller_output=103.9x
+savings=99.1%
+smaller_output=106.5x
 ```
 
 Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
@@ -70,6 +70,13 @@ codex mcp add codex-mcp-memory-server -- npx -y codex-mcp-memory-server
 ```
 
 See [docs/quickstart.md](docs/quickstart.md) for NPX usage, environment variables, and verification.
+
+Check local readiness at any time:
+
+```powershell
+npx -y -p codex-mcp-memory-server mcp-memory-doctor `
+  --project-path "C:\path\to\your\repo"
+```
 
 ## Tools
 
@@ -161,5 +168,6 @@ npm publish --access public
 - Compact outputs intentionally omit full code bodies to reduce token use during discovery.
 - Discovery results and body reads expose freshness metadata so stale index state is visible instead of silent.
 - Full source remains available through `get_symbol_body`.
+- Set `MCP_MEMORY_DISABLE_BODY_STORAGE=1` for metadata-only indexing when source bodies should not be persisted in SQLite.
 - `find_callers` returns AST definite callers and fuzzy probable callers.
 - v0.4.x development is focused on v1.0 hardening: real-repository validation, stronger tool contracts, performance stability, setup verification, and release discipline.

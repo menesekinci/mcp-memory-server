@@ -55,7 +55,6 @@ v1.0 should mean the project is reliable enough for agents to use as their first
 ## P6 - Privacy And Setup
 
 - Provide `.mcp-memoryignore`.
-- Provide metadata-only/body-storage controls.
+- Provide metadata-only/body-storage controls. Current baseline supports `MCP_MEMORY_DISABLE_BODY_STORAGE=1`.
 - Strengthen best-effort secret filtering and document its limitations.
-- Add `doctor`/setup verification for Node, package version, DB path, project path, MCP registration, and runtime readiness.
-
+- Add `doctor`/setup verification for Node, package version, DB path, project path, MCP registration, and runtime readiness. Current baseline includes `mcp-memory-doctor` for local readiness checks.

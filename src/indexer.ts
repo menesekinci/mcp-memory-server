@@ -10,6 +10,7 @@ import { execFileSync } from 'child_process';
 import db from './db';
 import { extractCallReferences } from './call-graph';
 import { symbolRef } from './refs';
+import { bodyStorageEnabled } from './privacy';
 
 const LANGUAGES = {
     '.ts': { language: (TypeScript as any).typescript, name: 'typescript' },
@@ -140,6 +141,7 @@ export async function indexFile(filePath: string, projectId = 'default', options
         parser.setLanguage(langConfig.language);
         const tree = parseContent(parser, content);
         const symbols = extractSymbols(tree, content, filePath, langConfig.name, projectId);
+        const shouldStoreBodies = bodyStorageEnabled();
         const callReferences = ['typescript', 'javascript', 'python'].includes(langConfig.name)
             ? extractCallReferences(tree, symbols, filePath, langConfig.name)
             : [];
@@ -169,7 +171,7 @@ export async function indexFile(filePath: string, projectId = 'default', options
             db.prepare("UPDATE symbols SET is_deleted = 1, updated_at = ? WHERE project_id = ? AND file_path = ?")
               .run(now, projectId, filePath);
             for (const s of symbolsToSave) {
-                upsertSymbol.run(s.id, s.ref, s.project_id, s.name, s.qualified_name, s.kind, s.file_path, s.start_line, s.end_line, s.signature, s.body, s.language, s.updated_at);
+                upsertSymbol.run(s.id, s.ref, s.project_id, s.name, s.qualified_name, s.kind, s.file_path, s.start_line, s.end_line, s.signature, shouldStoreBodies ? s.body : null, s.language, s.updated_at);
             }
             db.prepare("DELETE FROM symbol_calls WHERE project_id = ? AND file_path = ?").run(projectId, filePath);
             for (const call of callsToSave) {

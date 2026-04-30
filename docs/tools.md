@@ -4,6 +4,8 @@ Discovery tools return compact results by default. Use `get_symbol_body` only af
 
 Discovery and body-read tools expose freshness metadata. `fresh` means the indexed file hash matches the current working tree. `stale` means the working tree differs from the indexed hash or the file is missing. `excluded` means the file was intentionally skipped, and `unknown` means the server does not have enough path/hash information to prove freshness.
 
+When `MCP_MEMORY_DISABLE_BODY_STORAGE=1` is set, symbol bodies are not persisted in SQLite. Discovery, signatures, line ranges, freshness, and call graph metadata still work, but `include_body=true`, `read_context`, and `get_symbol_body` return `body_unavailable: "body_storage_disabled"` instead of stored source text.
+
 ## Compact Symbol Shape
 
 ```json
@@ -45,7 +47,7 @@ These tools accept `max_tokens`. The server estimates JSON size with `characters
 | `lookup_symbol` | Exact-name symbol lookup. Compact by default. |
 | `get_symbol_body` | Read full body by `symbol_id` or compact `ref`, including file freshness metadata. |
 | `find_callers` | Return AST definite callers and fuzzy probable callers. |
-| `changed_since` | List symbols changed since a timestamp. |
+| `changed_since` | List compact symbols changed since a timestamp. |
 | `get_symbol_history` | Read git-derived symbol history. |
 
 ## Memory Tools

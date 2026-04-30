@@ -474,8 +474,9 @@ async function testProjectIsolationContracts(db: TestDb, callTool: (name: string
 
     const changedA = parseToolJson<any[]>(await callTool('changed_since', { project_id: projectA, since: old }));
     const changedB = parseToolJson<any[]>(await callTool('changed_since', { project_id: projectB, since: old }));
-    assert(changedA.every(symbol => symbol.project_id === projectA), 'changed_since should isolate project A');
-    assert(changedB.every(symbol => symbol.project_id === projectB), 'changed_since should isolate project B');
+    assert(changedA.every(symbol => symbol.file !== 'shared-b.ts'), 'changed_since should isolate project A');
+    assert(changedB.every(symbol => symbol.file !== 'shared-a.ts'), 'changed_since should isolate project B');
+    assert(changedA.every(symbol => !('body' in symbol) && !('id' in symbol)), 'changed_since should return compact symbol metadata');
 
     const discussedA = parseToolJson<any[]>(await callTool('symbols_discussed_and_changed', { project_id: projectA }));
     const discussedB = parseToolJson<any[]>(await callTool('symbols_discussed_and_changed', { project_id: projectB }));
@@ -764,6 +765,47 @@ export class BillingService {
     } finally {
         await watcher.close();
     }
+}
+
+async function testBodyStoragePrivacyMode(
+    db: TestDb,
+    indexFile: (filePath: string, projectId?: string, options?: { force?: boolean }) => Promise<{ indexed?: boolean; skipped?: boolean; reason?: string }>,
+    callTool: (name: string, args?: Record<string, any>) => Promise<any>
+) {
+    const projectId = 'privacy-project';
+    const projectPath = createTempDir('mcp-memory-privacy');
+    const filePath = path.join(projectPath, 'privacy.ts');
+    const previous = process.env.MCP_MEMORY_DISABLE_BODY_STORAGE;
+    try {
+        writeFile(filePath, 'export function privateWorkflow() {\n  return "sensitive implementation";\n}\n');
+        process.env.MCP_MEMORY_DISABLE_BODY_STORAGE = '1';
+        const result = await indexFile(filePath, projectId, { force: true });
+        assert(result.indexed === true, 'privacy-mode indexFile should index source metadata');
+
+        const symbols = parseToolJson<any[]>(await callTool('lookup_symbol', {
+            project_id: projectId,
+            name: 'privateWorkflow',
+            include_body: true
+        }));
+        assert(symbols.length === 1, 'privacy-mode lookup should still find indexed symbols');
+        assert(!('body' in symbols[0]), 'privacy-mode lookup should not return stored source body');
+        assert(symbols[0].body_unavailable === 'body_storage_disabled', 'privacy-mode lookup should disclose disabled body storage');
+
+        const body = parseToolJson<any>(await callTool('get_symbol_body', {
+            project_id: projectId,
+            ref: symbols[0].ref
+        }));
+        assert(body.body === null && body.body_unavailable === 'body_storage_disabled', 'get_symbol_body should disclose unavailable body in privacy mode');
+        assert(!JSON.stringify(body).includes('sensitive implementation'), 'privacy-mode body response should not leak source text');
+    } finally {
+        if (previous === undefined) delete process.env.MCP_MEMORY_DISABLE_BODY_STORAGE;
+        else process.env.MCP_MEMORY_DISABLE_BODY_STORAGE = previous;
+        fs.rmSync(projectPath, { recursive: true, force: true });
+        db.prepare("DELETE FROM symbol_calls WHERE project_id = ?").run(projectId);
+        db.prepare("DELETE FROM symbols WHERE project_id = ?").run(projectId);
+        db.prepare("DELETE FROM files WHERE project_id = ?").run(projectId);
+    }
+    console.log('Body storage privacy tests passed.');
 }
 
 async function testAstCallGraph(db: TestDb, startIndexer: (projectPath: string, projectId?: string) => any, callTool: (name: string, args?: Record<string, any>) => Promise<any>) {
@@ -1366,6 +1408,8 @@ async function main() {
 
     await testIndexerEdges(runtime.db, runtime.startIndexer, runtime.callTool);
     console.log('Indexer edge tests passed.');
+
+    await testBodyStoragePrivacyMode(runtime.db, runtime.indexFile, runtime.callTool);
 
     await testAstCallGraph(runtime.db, runtime.startIndexer, runtime.callTool);
     console.log('AST call graph tests passed.');

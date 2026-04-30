@@ -6,6 +6,7 @@ import Python from 'tree-sitter-python';
 import JavaScript from 'tree-sitter-javascript';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { bodyStorageEnabled } from './privacy';
 
 const LANGUAGES = {
     '.ts': { language: (TypeScript as any).typescript, name: 'typescript' },
@@ -68,6 +69,7 @@ function indexHistoricalFile(projectPath: string, sha: string, meta: { subject: 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         `);
 
+        const shouldStoreBodies = bodyStorageEnabled();
         const transaction = db.transaction((syms: any[]) => {
             syms.forEach((s, index) => {
                 insertSymbol.run(
@@ -80,7 +82,7 @@ function indexHistoricalFile(projectPath: string, sha: string, meta: { subject: 
                     s.start_line,
                     s.end_line,
                     s.signature,
-                    s.body,
+                    shouldStoreBodies ? s.body : null,
                     langConfig.name,
                     sha,
                     meta.timestamp
@@ -89,7 +91,7 @@ function indexHistoricalFile(projectPath: string, sha: string, meta: { subject: 
                     uuidv4(),
                     s.id,
                     index,
-                    s.body,
+                    shouldStoreBodies ? s.body : null,
                     s.signature,
                     s.start_line,
                     s.end_line,

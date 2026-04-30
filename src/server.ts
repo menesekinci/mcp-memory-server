@@ -12,6 +12,7 @@ import { resolveSymbolReferences } from "./symbol-resolver";
 import { CountRow, DecisionRow, MessageRow, SessionRow, SymbolReference, SymbolRow } from "./types";
 import { getFileFreshness, getProjectIndexHealth, listChangedSourceFiles, reindexChangedFiles, reconcileProjectFiles } from "./indexer";
 import { symbolRef } from "./refs";
+import { bodyUnavailableReason } from "./privacy";
 
 const server = new Server(
   {
@@ -435,6 +436,7 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
     return {
       content: [{ type: "text", text: JSON.stringify({
         ...symbol,
+        ...(symbol.body === null ? { body_unavailable: bodyUnavailableReason() } : {}),
         freshness: getFileFreshness(symbol.file_path, symbol.project_id)
       }) }],
     };
@@ -467,9 +469,10 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
   if (name === "changed_since") {
     const projectName = args.project_id || 'default';
     const since = args.since;
-    const symbols = db.prepare("SELECT * FROM symbols WHERE project_id = ? AND updated_at > ?").all(projectName, since);
+    const symbols = db.prepare("SELECT * FROM symbols WHERE project_id = ? AND updated_at > ? AND is_deleted = 0")
+      .all(projectName, since) as SymbolRow[];
     return {
-      content: [{ type: "text", text: JSON.stringify(symbols) }],
+      content: [{ type: "text", text: JSON.stringify(symbols.map(symbol => formatSymbol(symbol, { includeBody: false, verbose: false }))) }],
     };
   }
 
@@ -851,7 +854,11 @@ function formatSymbol(symbol: SymbolRow, options: { includeBody: boolean; verbos
     language: symbol.language,
     updated_at: symbol.updated_at,
     freshness,
-    ...(options.includeBody ? { body: symbol.body } : {})
+    ...(options.includeBody
+      ? symbol.body === null
+        ? { body_unavailable: bodyUnavailableReason() }
+        : { body: symbol.body }
+      : {})
   };
 }
 

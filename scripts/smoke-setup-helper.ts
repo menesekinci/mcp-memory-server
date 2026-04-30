@@ -35,6 +35,21 @@ function main() {
         if (!output.includes('npx -y codex-mcp-memory-server')) {
             throw new Error(`Dry-run command did not include npx launch. output=${output}`);
         }
+        const doctorOutput = execFileSync(nodeCommand(), [
+            path.join(process.cwd(), 'bin', 'mcp-memory-doctor.js'),
+            '--project-path',
+            projectPath,
+            '--db-path',
+            dbPath,
+            '--json'
+        ], { encoding: 'utf8' });
+        const doctor = JSON.parse(doctorOutput);
+        if (!doctor.ok) {
+            throw new Error(`Doctor did not report ready. output=${doctorOutput}`);
+        }
+        if (!doctor.checks.some((check: any) => check.name === 'supported_sources')) {
+            throw new Error(`Doctor did not include supported source scan. output=${doctorOutput}`);
+        }
         console.log('Setup helper smoke passed.');
     } finally {
         fs.rmSync(projectPath, { recursive: true, force: true });

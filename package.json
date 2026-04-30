@@ -6,6 +6,8 @@
   "bin": {
     "codex-mcp-memory-server": "bin/codex-mcp-memory-server.js",
     "mcp-memory-server": "bin/codex-mcp-memory-server.js",
+    "mcp-memory-doctor": "bin/mcp-memory-doctor.js",
+    "codex-mcp-memory-doctor": "bin/mcp-memory-doctor.js",
     "setup-codex-mcp-memory": "bin/setup-codex-mcp-memory.js"
   },
   "files": [
@@ -25,6 +27,7 @@
     "test:integration": "ts-node test-integration.ts",
     "benchmark": "ts-node scripts/benchmark.ts",
     "dogfood:real": "ts-node scripts/dogfood-real-repos.ts",
+    "doctor": "node bin/mcp-memory-doctor.js --project-path .",
     "smoke:setup": "ts-node scripts/smoke-setup-helper.ts",
     "smoke:npx": "ts-node scripts/smoke-npx-runtime.ts",
     "test": "npm run typecheck && npm run test:faz0 && npm run test:integration",

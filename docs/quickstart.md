@@ -21,6 +21,20 @@ npx -y -p codex-mcp-memory-server setup-codex-mcp-memory `
 
 The verification checks the project path, database directory, `npx`, `codex`, and prints the exact install command.
 
+Run a standalone readiness check any time:
+
+```powershell
+npx -y -p codex-mcp-memory-server mcp-memory-doctor `
+  --project-path "C:\path\to\your\repo" `
+  --db-path "C:\Users\you\.mcp-memory-server\memory.db"
+```
+
+For CI or scripted setup checks, use JSON output:
+
+```powershell
+npx -y -p codex-mcp-memory-server mcp-memory-doctor --project-path "." --json
+```
+
 Or add the MCP server manually:
 
 ```powershell
@@ -65,6 +79,7 @@ npx -y codex-mcp-memory-server
 | `PROJECT_PATH` | Current working directory | Project to index and watch. |
 | `PROJECT_ID` | Basename of `PROJECT_PATH` | Logical project key used in SQLite records. |
 | `MCP_MEMORY_DB_PATH` | `~/.mcp-memory-server/memory.db` | SQLite database path. |
+| `MCP_MEMORY_DISABLE_BODY_STORAGE` | unset | Set to `1` to store symbol metadata/signatures without persisting source bodies. |
 | `INSTALL_GIT_HOOKS` | unset | Set to `1` to install local git hooks. Disabled by default. |
 
 ## Verify
@@ -73,6 +88,12 @@ Before adding the server, use setup verification:
 
 ```powershell
 npx -y -p codex-mcp-memory-server setup-codex-mcp-memory --verify
+```
+
+After adding or upgrading the package, run:
+
+```powershell
+npx -y -p codex-mcp-memory-server mcp-memory-doctor --project-path "C:\path\to\your\repo"
 ```
 
 Ask the MCP client to run:

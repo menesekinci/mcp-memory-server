@@ -101,8 +101,10 @@ Go caller extraction currently supports:
 - `func` symbols, `type` declarations, and receiver methods such as `func (c *Calculator) Total()`.
 - Same-package function calls.
 - `go.mod` module import resolution for package selector calls such as `price.Round()`.
+- `go.work` workspace import resolution across local modules.
 - Same-type receiver method calls such as `c.normalize()`.
 - Local constructor-assigned instance method calls such as `calc := &Calculator{}` followed by `calc.normalize()`.
 - Embedded struct promoted method calls such as `AdvancedCalculator` embedding `Calculator` and calling `a.normalize()`.
+- Generated Go files with the standard `Code generated ... DO NOT EDIT.` marker are excluded from symbol indexing to avoid noisy machine-generated callers.
 
-Go support is intentionally still early. Interface dispatch, build tags, generated files, and workspace-level multi-module resolution should be expanded after the core Go benchmarks and dogfooding stay stable.
+Go support is intentionally still early. Interface dispatch, build tags, vendor/replace handling, and more complex workspace layouts should be expanded after the core Go benchmarks and dogfooding stay stable.

@@ -4,7 +4,7 @@
 
 Symbol-aware MCP memory server for Codex and coding agents.
 
-It indexes TypeScript, TSX, JavaScript, JSX, Python, and Go projects with tree-sitter, stores symbol metadata in SQLite, and exposes compact MCP tools for low-token project discovery. The current implementation is TS/JS-first for caller precision, including imports, barrel re-exports, selective TypeScript compiler API symbol resolution, simple instance method calls, and TSX/JSX component usage. Python supports symbol discovery, async functions, same-file calls, relative/module import calls, dotted module imports, package `__init__.py` re-exports, `self.method()` calls, same-file and imported-base inherited `self.method()` calls, `super().method()` calls, and local or `self.attr` constructor-assigned instance method calls. Go support starts with functions, structs, receiver methods, same-package calls, `go.mod` module import calls, local constructor-assigned instance method calls, receiver method calls, and embedded struct promoted method calls.
+It indexes TypeScript, TSX, JavaScript, JSX, Python, and Go projects with tree-sitter, stores symbol metadata in SQLite, and exposes compact MCP tools for low-token project discovery. The current implementation is TS/JS-first for caller precision, including imports, barrel re-exports, selective TypeScript compiler API symbol resolution, simple instance method calls, and TSX/JSX component usage. Python supports symbol discovery, async functions, same-file calls, relative/module import calls, dotted module imports, package `__init__.py` re-exports, `self.method()` calls, same-file and imported-base inherited `self.method()` calls, `super().method()` calls, and local or `self.attr` constructor-assigned instance method calls. Go support starts with functions, structs, receiver methods, same-package calls, `go.mod` and `go.work` module import calls, local constructor-assigned instance method calls, receiver method calls, embedded struct promoted method calls, and generated Go file exclusion.
 
 ## Why
 
@@ -22,17 +22,17 @@ Agents often spend a lot of tokens finding the right file or function before rea
 Current benchmark task: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=5810
+classic_tokens=6452
 mcp_tokens=50
-savings=99.1%
-smaller_output=116.2x
+savings=99.2%
+smaller_output=129.0x
 ```
 
 Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
 
 See [docs/benchmarks.md](docs/benchmarks.md) for benchmark scope and output files.
 
-The benchmark suite also includes real task-shaped checks such as bug-fix root symbol selection, refactor impact analysis, regression narrowing, PR risk summaries, noisy bug investigation narrowing, AST caller precision, TSX component usage, incremental Git reindexing, language-depth coverage, synthetic 10k-symbol scale smoke, and synthetic monorepo workspace scale smoke.
+The benchmark suite also includes real task-shaped checks such as bug-fix root symbol selection, refactor impact analysis, regression narrowing, PR risk summaries, noisy bug investigation narrowing, AST caller precision, TSX component usage, incremental Git reindexing, language-depth coverage, Go workspace/generated-file behavior, synthetic 10k-symbol scale smoke, and synthetic monorepo workspace scale smoke.
 
 Real repository dogfooding is available with:
 
@@ -40,7 +40,7 @@ Real repository dogfooding is available with:
 npm run dogfood:real
 ```
 
-It clones a small set of real open-source repositories into the system temp directory and writes reports under `dogfood/results/`. The current dogfood set covers Express, Zod, Typer, Click, Requests, Flask, Axios, and p-limit.
+It clones a small set of real open-source repositories into the system temp directory and writes reports under `dogfood/results/`. The current dogfood set covers Express, Zod, Typer, Click, Requests, Flask, Axios, p-limit, and Cobra.
 
 ## Quick Start
 

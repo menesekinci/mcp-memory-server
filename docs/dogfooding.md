@@ -31,7 +31,7 @@ This report records the v0.3 validation work performed on this repository.
 
 ## Real Repository Dogfooding
 
-`npm run dogfood:real` clones shallow copies of real open-source repositories into the system temp directory, indexes supported source files into an isolated temporary SQLite database, then runs the high-level agent flow. The current set covers Express, Zod, Typer, Click, Requests, Flask, Axios, and p-limit:
+`npm run dogfood:real` clones shallow copies of real open-source repositories into the system temp directory, indexes supported source files into an isolated temporary SQLite database, then runs the high-level agent flow. The current set covers Express, Zod, Typer, Click, Requests, Flask, Axios, p-limit, and Cobra:
 
 ```text
 code_search -> read_context -> impact_analysis -> index_status
@@ -49,6 +49,7 @@ Latest run:
 | pallets/flask | 83 | 1361 | `Flask` | 13549 | 375 | fresh |
 | axios/axios | 194 | 532 | `Axios` | 29611 | 375 | fresh |
 | sindresorhus/p-limit | 6 | 37 | `pLimit` | 1359 | 113 | fresh |
+| spf13/cobra | 36 | 614 | `getCompletions` | 159 | 131 | fresh |
 
 Artifacts are written to:
 
@@ -62,3 +63,4 @@ Findings converted from this pass:
 - `code_search` no longer ranks symbols by matching the absolute project root path. Real Typer dogfooding showed that querying `Typer` could match every file under a `typer` checkout and select an unrelated docs JavaScript symbol. Ranking now uses project-relative paths for path matching.
 - TypeScript checker resolution now forces `traceResolution: false` so real repositories with verbose tsconfig settings do not flood dogfooding output.
 - Real dogfooding now uses an isolated temporary SQLite database so validation does not pollute a user's local MCP memory.
+- Go dogfooding now includes Cobra, giving the Go indexing path a real repository smoke alongside synthetic receiver/import/workspace fixtures.

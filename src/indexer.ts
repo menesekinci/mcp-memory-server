@@ -128,7 +128,7 @@ export async function indexFile(filePath: string, projectId = 'default', options
         }
 
         const now = Date.now();
-        if (isSecretFile(filePath) || containsSecrets(content)) {
+        if (isSecretFile(filePath) || containsSecrets(content) || isGeneratedGoFile(filePath, content)) {
             db.prepare(`
                 INSERT INTO files (id, project_id, path, language, last_indexed_at, git_blob_sha, is_excluded)
                 VALUES (?, ?, ?, ?, ?, ?, 1)
@@ -420,6 +420,10 @@ function containsSecrets(content: string) {
         /-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/
     ];
     return secretPatterns.some(pattern => pattern.test(content));
+}
+
+function isGeneratedGoFile(filePath: string, content: string) {
+    return filePath.endsWith('.go') && /Code generated .* DO NOT EDIT\./i.test(content.slice(0, 2048));
 }
 
 function isSupportedSourceFile(filePath: string) {

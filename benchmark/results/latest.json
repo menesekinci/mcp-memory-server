@@ -1,10 +1,10 @@
 {
-  "generated_at": "2026-04-30T23:20:04.725Z",
+  "generated_at": "2026-04-30T23:29:30.795Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
-      "classic_chars": 25428,
-      "classic_tokens": 6357,
+      "classic_chars": 25806,
+      "classic_tokens": 6452,
       "mcp_chars": 200,
       "mcp_tokens": 50,
       "token_savings_pct": 99.2,
@@ -33,7 +33,7 @@
     },
     {
       "name": "language_depth_js_python_callers",
-      "notes": "JavaScript callers: checkout; Python same-file: checkout_py; Python async: checkout_async_py; Python from/re-export: checkout_external_py, checkout_reexport_py; Python module-import: checkout_module_py, checkout_nested_module_py; Python instance-method: checkout_instance_py; Python inherited-self: AdvancedCalculator.total; Python imported-base: RemoteAdvancedCalculator.total; Python super: SuperAdvancedCalculator.total; Python self-attribute instance: UsesWorker.execute; Go same-package: CheckoutGo; Go import: CalculateTotal; Go receiver/local/embedded methods: Calculator.Total, BuildWithLocal, AdvancedCalculator.Total.",
+      "notes": "JavaScript callers: checkout; Python same-file: checkout_py; Python async: checkout_async_py; Python from/re-export: checkout_external_py, checkout_reexport_py; Python module-import: checkout_module_py, checkout_nested_module_py; Python instance-method: checkout_instance_py; Python inherited-self: AdvancedCalculator.total; Python imported-base: RemoteAdvancedCalculator.total; Python super: SuperAdvancedCalculator.total; Python self-attribute instance: UsesWorker.execute; Go same-package: CheckoutGo; Go import: CalculateTotal; Go receiver/local/embedded methods: Calculator.Total, BuildWithLocal, AdvancedCalculator.Total; Go workspace import: CheckoutWorkspace; generated excluded: true.",
       "passed": true
     },
     {
@@ -83,12 +83,12 @@
     },
     {
       "name": "performance_scale_10k_symbols",
-      "notes": "Cold index: 5647ms for 1000 files/10001 symbols; search: 4.2ms; caller: 2.2ms; incremental: 152.9ms for 1 changed file; risk: 199.6ms for 26 changed files; db: 8.3MB.",
+      "notes": "Cold index: 5588ms for 1000 files/10001 symbols; search: 4.1ms; caller: 2.2ms; incremental: 125.7ms for 1 changed file; risk: 179.5ms for 26 changed files; db: 8.3MB.",
       "passed": true
     },
     {
       "name": "performance_monorepo_workspace",
-      "notes": "Cold index: 4301ms for 20 packages/800 files/4801 symbols; search: 2.8ms; caller: 1.3ms; incremental: 177.5ms for 1 changed file; risk: 108.6ms for 6 changed files; db: 12.5MB.",
+      "notes": "Cold index: 4111ms for 20 packages/800 files/4801 symbols; search: 1.9ms; caller: 1ms; incremental: 166.8ms for 1 changed file; risk: 114.7ms for 6 changed files; db: 12.6MB.",
       "passed": true
     }
   ]

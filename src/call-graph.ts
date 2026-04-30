@@ -461,8 +461,29 @@ function goConstructedTypeName(node: Parser.SyntaxNode): string | null {
 
 function resolveGoPackageDir(fromFilePath: string, importPath: string) {
     const moduleRoot = findGoModuleRoot(path.dirname(fromFilePath));
-    if (!moduleRoot) return null;
-    const goMod = fs.readFileSync(path.join(moduleRoot, 'go.mod'), 'utf8');
+    const local = moduleRoot ? resolveGoImportInModule(moduleRoot, importPath) : null;
+    if (local) return local;
+    for (const workspaceModule of findGoWorkspaceModules(path.dirname(fromFilePath))) {
+        const resolved = resolveGoImportInModule(workspaceModule, importPath);
+        if (resolved) return resolved;
+    }
+    return null;
+}
+
+function findGoModuleRoot(startDir: string) {
+    let current = path.resolve(startDir);
+    while (true) {
+        if (fs.existsSync(path.join(current, 'go.mod'))) return current;
+        const parent = path.dirname(current);
+        if (parent === current) return null;
+        current = parent;
+    }
+}
+
+function resolveGoImportInModule(moduleRoot: string, importPath: string) {
+    const goModPath = path.join(moduleRoot, 'go.mod');
+    if (!fs.existsSync(goModPath)) return null;
+    const goMod = fs.readFileSync(goModPath, 'utf8');
     const moduleName = goMod.match(/^module\s+(.+)$/m)?.[1]?.trim();
     if (!moduleName || !importPath.startsWith(moduleName)) return null;
     const relativePath = importPath.slice(moduleName.length).replace(/^\/+/, '');
@@ -470,10 +491,29 @@ function resolveGoPackageDir(fromFilePath: string, importPath: string) {
     return fs.existsSync(packageDir) ? packageDir : null;
 }
 
-function findGoModuleRoot(startDir: string) {
+function findGoWorkspaceModules(startDir: string) {
+    const workspaceRoot = findGoWorkspaceRoot(startDir);
+    if (!workspaceRoot) return [];
+    const goWork = fs.readFileSync(path.join(workspaceRoot, 'go.work'), 'utf8');
+    const usePaths = new Set<string>();
+    const useBlock = goWork.match(/use\s*\(([\s\S]*?)\)/m)?.[1];
+    for (const rawLine of (useBlock || '').split(/\r?\n/)) {
+        const line = rawLine.replace(/\/\/.*$/, '').trim();
+        if (line) usePaths.add(line);
+    }
+    for (const match of goWork.matchAll(/^use\s+(.+)$/gm)) {
+        const line = match[1].replace(/\/\/.*$/, '').trim();
+        if (line && !line.startsWith('(')) usePaths.add(line);
+    }
+    return [...usePaths]
+        .map(usePath => path.resolve(workspaceRoot, usePath))
+        .filter(modulePath => fs.existsSync(path.join(modulePath, 'go.mod')));
+}
+
+function findGoWorkspaceRoot(startDir: string) {
     let current = path.resolve(startDir);
     while (true) {
-        if (fs.existsSync(path.join(current, 'go.mod'))) return current;
+        if (fs.existsSync(path.join(current, 'go.work'))) return current;
         const parent = path.dirname(current);
         if (parent === current) return null;
         current = parent;

@@ -79,6 +79,9 @@ See also [Product Vision](VISION.md) and [v1.0 Criteria](V1_CRITERIA.md). The cu
 - [x] Add Python async function indexing and async caller coverage.
 - [x] Add Python dotted module import caller resolution.
 - [x] Add Python same-file inherited `self.method()` caller resolution.
+- [x] Add Python imported-base inherited `self.method()` caller resolution.
+- [x] Add Python `super().method()` caller resolution.
+- [x] Add Python `self.attr = Service()` instance method caller resolution.
 - [x] Add lightweight TypeScript constructor/type-annotation instance method resolution.
 - [x] Add TSX/JSX component usage graph.
 - [x] Add TypeScript compiler API based type-aware resolution.

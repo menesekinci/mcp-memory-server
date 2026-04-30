@@ -335,6 +335,7 @@ async function benchmarkLanguageDepth(): Promise<BenchmarkResult> {
     const jsFile = path.join(projectPath, 'src', 'cart.js');
     const pyFile = path.join(projectPath, 'src', 'cart.py');
     const pyPricingFile = path.join(projectPath, 'src', 'pricing.py');
+    const pyBaseFile = path.join(projectPath, 'src', 'base.py');
     const pyMoneyFile = path.join(projectPath, 'src', 'billing', 'money.py');
     const pyInitFile = path.join(projectPath, 'src', '__init__.py');
 
@@ -351,6 +352,18 @@ def calculate_external_total():
 class PriceCalculator:
     def total(self, value):
         return value
+
+class Worker:
+    def run(self):
+        return 1
+`);
+    writeFile(pyBaseFile, `
+class RemoteBaseCalculator:
+    def remote_total(self, value):
+        return value
+
+    def super_total(self, value):
+        return value
 `);
     writeFile(pyInitFile, 'from .pricing import calculate_external_total as exported_total\n');
     writeFile(pyMoneyFile, `
@@ -360,6 +373,8 @@ def round_money(value):
     writeFile(pyFile, `
 from .pricing import calculate_external_total as external_total
 from .pricing import PriceCalculator as Calculator
+from .pricing import Worker
+from .base import RemoteBaseCalculator
 from . import exported_total
 import billing.money as money
 import billing.money
@@ -399,6 +414,21 @@ class BaseCalculator:
 class AdvancedCalculator(BaseCalculator):
     def total(self, value):
         return self.inherited_total(value)
+
+class RemoteAdvancedCalculator(RemoteBaseCalculator):
+    def total(self, value):
+        return self.remote_total(value)
+
+class SuperAdvancedCalculator(RemoteBaseCalculator):
+    def total(self, value):
+        return super().super_total(value)
+
+class UsesWorker:
+    def __init__(self):
+        self.worker = Worker()
+
+    def execute(self):
+        return self.worker.run()
 `);
 
     const runtime = await withRuntime(projectPath, projectId);
@@ -419,7 +449,13 @@ class AdvancedCalculator(BaseCalculator):
               .get(projectId, 'total', pyPricingFile);
             const pyInheritedTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'inherited_total', pyFile);
-            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget);
+            const pyRemoteTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'remote_total', pyBaseFile);
+            const pySuperTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'super_total', pyBaseFile);
+            const pyWorkerTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'run', pyPricingFile);
+            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget);
         });
 
         const jsTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -436,6 +472,12 @@ class AdvancedCalculator(BaseCalculator):
           .get(projectId, 'total', pyPricingFile) as { id: string };
         const pyInheritedTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'inherited_total', pyFile) as { id: string };
+        const pyRemoteTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'remote_total', pyBaseFile) as { id: string };
+        const pySuperTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'super_total', pyBaseFile) as { id: string };
+        const pyWorkerTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'run', pyPricingFile) as { id: string };
         const jsPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: jsTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyAsyncPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyAsyncTarget.id, min_confidence: 0.0 })).content[0].text);
@@ -443,6 +485,9 @@ class AdvancedCalculator(BaseCalculator):
         const pyModulePayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyModuleTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyInstancePayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyInstanceTarget.id, min_confidence: 0.0 })).content[0].text);
         const pyInheritedPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyInheritedTarget.id, min_confidence: 0.0 })).content[0].text);
+        const pyRemotePayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyRemoteTarget.id, min_confidence: 0.0 })).content[0].text);
+        const pySuperPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pySuperTarget.id, min_confidence: 0.0 })).content[0].text);
+        const pyWorkerPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: pyWorkerTarget.id, min_confidence: 0.0 })).content[0].text);
         const jsCallers = jsPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyCallers = pyPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyAsyncCallers = pyAsyncPayload.definite_callers.map((caller: any) => caller.qualified_name);
@@ -450,10 +495,13 @@ class AdvancedCalculator(BaseCalculator):
         const pyModuleCallers = pyModulePayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyInstanceCallers = pyInstancePayload.definite_callers.map((caller: any) => caller.qualified_name);
         const pyInheritedCallers = pyInheritedPayload.definite_callers.map((caller: any) => caller.qualified_name);
+        const pyRemoteCallers = pyRemotePayload.definite_callers.map((caller: any) => caller.qualified_name);
+        const pySuperCallers = pySuperPayload.definite_callers.map((caller: any) => caller.qualified_name);
+        const pyWorkerCallers = pyWorkerPayload.definite_callers.map((caller: any) => caller.qualified_name);
 
         return {
             name: 'language_depth_js_python_callers',
-            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python async: ${pyAsyncCallers.join(', ') || 'none'}; Python from/re-export: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}; Python instance-method: ${pyInstanceCallers.join(', ') || 'none'}; Python inherited-self: ${pyInheritedCallers.join(', ') || 'none'}.`,
+            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python async: ${pyAsyncCallers.join(', ') || 'none'}; Python from/re-export: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}; Python instance-method: ${pyInstanceCallers.join(', ') || 'none'}; Python inherited-self: ${pyInheritedCallers.join(', ') || 'none'}; Python imported-base: ${pyRemoteCallers.join(', ') || 'none'}; Python super: ${pySuperCallers.join(', ') || 'none'}; Python self-attribute instance: ${pyWorkerCallers.join(', ') || 'none'}.`,
             passed: jsCallers.includes('checkout')
                 && pyCallers.includes('checkout_py')
                 && pyAsyncCallers.includes('checkout_async_py')
@@ -463,6 +511,9 @@ class AdvancedCalculator(BaseCalculator):
                 && pyModuleCallers.includes('checkout_nested_module_py')
                 && pyInstanceCallers.includes('checkout_instance_py')
                 && pyInheritedCallers.includes('AdvancedCalculator.total')
+                && pyRemoteCallers.includes('RemoteAdvancedCalculator.total')
+                && pySuperCallers.includes('SuperAdvancedCalculator.total')
+                && pyWorkerCallers.includes('UsesWorker.execute')
         };
     } finally {
         await watcher.close();

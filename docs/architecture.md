@@ -90,7 +90,8 @@ Python caller extraction currently supports:
 - Module imports such as `import package.module as alias` followed by `alias.function()`.
 - Dotted module calls such as `import package.module` followed by `package.module.function()`.
 - Same-file `self.method()` calls.
-- Same-file inherited `self.method()` calls where a subclass calls a base class method.
-- Simple constructor-assigned instance method calls such as `service = Service()` followed by `service.run()`.
+- Same-file and imported-base inherited `self.method()` calls where a subclass calls a base class method.
+- `super().method()` calls against same-file or imported base classes.
+- Simple constructor-assigned instance method calls such as `service = Service()` or `self.service = Service()` followed by `service.run()` or `self.service.run()`.
 
 Fuzzy matching remains available for string-only mentions and broader probable caller fallback.

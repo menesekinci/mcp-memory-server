@@ -22,7 +22,7 @@ benchmark/results/latest.md
 | `ast_import_resolver_precision` | Import/barrel resolver precision with same-name and local-shadowing checks. |
 | `tsx_component_and_instance_graph` | TypeScript compiler API resolution for TSX component usage and function-return-typed instance method caller extraction. |
 | `incremental_changed_file_reindex` | Git changed-file reindexing with blob hashes. |
-| `language_depth_js_python_callers` | JavaScript symbol extraction plus Python same-file, from-import, re-export, module-import, and simple instance-method caller extraction. |
+| `language_depth_js_python_callers` | JavaScript symbol extraction plus Python same-file, async, from-import, re-export, module-import, inheritance, `super()`, and instance-method caller extraction. |
 | `bugfix_investigation_narrowing` | Noisy bug-fix discovery using compact symbols, conversation history, and decisions instead of broad text output. |
 | `task_success_bugfix_root_symbol` | Confirms bug-fix discovery selects the correct root symbol, not only a smaller output. |
 | `task_success_refactor_impact` | Confirms `find_callers` returns production refactor impact with low false positives. |
@@ -37,10 +37,10 @@ benchmark/results/latest.md
 The current measured discovery task is: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=5194
+classic_tokens=6084
 mcp_tokens=50
-savings=99.0%
-smaller_output=103.9x
+savings=99.2%
+smaller_output=121.7x
 ```
 
 Token counts are practical estimates using `characters / 4`. The benchmark measures discovery output size, not final answer quality.
@@ -58,4 +58,4 @@ The suite now includes task-shaped checks beyond raw output size:
 - Performance and scale regression smoke for a synthetic 1k-file, 10k-symbol project.
 - Monorepo workspace scale smoke for a synthetic 20-package workspace with ignored generated output.
 - Git edge cases such as checkout, merge, rename, delete, staged, and untracked states.
-- Language-depth checks for Python package re-exports and simple constructor-assigned instance method calls.
+- Language-depth checks for Python package re-exports, async calls, module imports, inherited `self.method()`, `super().method()`, and local or `self.attr` constructor-assigned instance method calls.

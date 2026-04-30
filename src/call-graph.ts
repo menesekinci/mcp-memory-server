@@ -95,8 +95,11 @@ function extractPythonCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[]
             if (callee && caller && (callee.memberName || callee.localName) !== caller.name) {
                 const imported = resolvePythonImportedTarget(callee, imports);
                 const selfMethod = callee.localName === 'self' && callee.memberName;
-                const instanceMethod = !imported && !selfMethod && callee.memberName
-                    ? resolvePythonInstanceMethod(callee, objectTypes)
+                const superMethod = callee.localName === 'super' && callee.memberName
+                    ? resolvePythonSuperMethod(caller, callee.memberName, classMethods, classBases)
+                    : null;
+                const instanceMethod = !imported && !selfMethod && !superMethod && callee.memberName
+                    ? resolvePythonInstanceMethod(callee, objectTypes, caller)
                     : null;
                 const inheritedSelfMethod = selfMethod
                     ? resolvePythonSelfMethod(caller, callee.memberName, classMethods, classBases)
@@ -106,13 +109,13 @@ function extractPythonCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[]
                     : undefined;
                 calls.push({
                     caller_symbol_id: caller.id,
-                    target_name: imported?.name || instanceMethod?.name || inheritedSelfMethod?.name || callee.memberName || callee.localName,
-                    target_qualified_name: instanceMethod?.qualifiedName || selfQualifiedName,
-                    target_file_path: imported?.filePath || instanceMethod?.filePath || inheritedSelfMethod?.filePath,
+                    target_name: imported?.name || instanceMethod?.name || inheritedSelfMethod?.name || superMethod?.name || callee.memberName || callee.localName,
+                    target_qualified_name: instanceMethod?.qualifiedName || selfQualifiedName || superMethod?.qualifiedName,
+                    target_file_path: imported?.filePath || instanceMethod?.filePath || inheritedSelfMethod?.filePath || superMethod?.filePath,
                     file_path: filePath,
                     line: node.startPosition.row + 1,
-                    confidence: imported ? 0.95 : instanceMethod ? 0.93 : inheritedSelfMethod ? 0.91 : selfMethod ? 0.92 : 0.9,
-                    resolution_method: imported?.method || instanceMethod?.method || inheritedSelfMethod?.method || (selfMethod ? 'ast_python_self_method' : 'ast_python_name')
+                    confidence: imported ? 0.95 : instanceMethod ? 0.93 : inheritedSelfMethod ? 0.91 : superMethod ? 0.91 : selfMethod ? 0.92 : 0.9,
+                    resolution_method: imported?.method || instanceMethod?.method || inheritedSelfMethod?.method || superMethod?.method || (selfMethod ? 'ast_python_self_method' : 'ast_python_name')
                 });
             }
         }
@@ -547,14 +550,32 @@ function resolvePythonImportedTarget(callee: Callee, imports: PythonImportMap) {
 function extractPythonObjectTypes(root: Parser.SyntaxNode, filePath: string, imports: PythonImportMap): PythonObjectTypeMap {
     const objectTypes: PythonObjectTypeMap = new Map();
 
-    function traverse(node: Parser.SyntaxNode) {
+    function traverse(node: Parser.SyntaxNode, classScope?: string, functionScope?: string) {
+        if (node.type === 'class_definition') {
+            const nameNode = node.childForFieldName('name');
+            for (let i = 0; i < node.namedChildCount; i++) {
+                traverse(node.namedChild(i), nameNode?.text || classScope, undefined);
+            }
+            return;
+        }
+
+        if (node.type === 'function_definition' || node.type === 'async_function_definition') {
+            const nameNode = node.childForFieldName('name');
+            const qualifiedFunction = nameNode ? (classScope ? `${classScope}.${nameNode.text}` : nameNode.text) : functionScope;
+            for (let i = 0; i < node.namedChildCount; i++) {
+                traverse(node.namedChild(i), classScope, qualifiedFunction);
+            }
+            return;
+        }
+
         if (node.type === 'assignment') {
             const left = node.namedChild(0);
             const right = node.namedChild(1);
             const constructor = right?.type === 'call' ? extractPythonCallee(right) : null;
-            if (left?.type === 'identifier' && constructor && !constructor.memberName) {
+            const targetName = left ? pythonAssignmentTargetName(left) : null;
+            if (targetName && constructor && !constructor.memberName) {
                 const imported = imports.named.get(constructor.localName);
-                objectTypes.set(left.text, {
+                objectTypes.set(pythonObjectTypeKey(targetName, classScope, functionScope), {
                     className: imported?.importedName || constructor.localName,
                     filePath: imported ? resolvePythonExportedTarget(imported.importedName, imported.sourceFilePath).filePath : filePath
                 });
@@ -562,7 +583,7 @@ function extractPythonObjectTypes(root: Parser.SyntaxNode, filePath: string, imp
         }
 
         for (let i = 0; i < node.namedChildCount; i++) {
-            traverse(node.namedChild(i));
+            traverse(node.namedChild(i), classScope, functionScope);
         }
     }
 
@@ -570,9 +591,28 @@ function extractPythonObjectTypes(root: Parser.SyntaxNode, filePath: string, imp
     return objectTypes;
 }
 
-function resolvePythonInstanceMethod(callee: Callee, objectTypes: PythonObjectTypeMap) {
+function pythonAssignmentTargetName(node: Parser.SyntaxNode): string | null {
+    if (node.type === 'identifier') return node.text;
+    if (node.type !== 'attribute') return null;
+    const identifiers = identifiersOf(node).map(identifier => identifier.text);
+    return identifiers.length >= 2 ? identifiers.join('.') : null;
+}
+
+function pythonObjectTypeKey(targetName: string, classScope?: string, functionScope?: string) {
+    if (targetName.startsWith('self.') && classScope) return `${classScope}:${targetName}`;
+    if (functionScope) return `${functionScope}:${targetName}`;
+    return targetName;
+}
+
+function resolvePythonInstanceMethod(callee: Callee, objectTypes: PythonObjectTypeMap, caller: IndexedSymbol) {
     if (!callee.memberName) return null;
-    const objectType = objectTypes.get(callee.localName);
+    const currentClass = caller.qualified_name?.split('.').slice(0, -1).join('.');
+    const candidates = [
+        caller.qualified_name ? `${caller.qualified_name}:${callee.localName}` : undefined,
+        currentClass ? `${currentClass}:${callee.localName}` : undefined,
+        callee.localName
+    ].filter(Boolean) as string[];
+    const objectType = candidates.map(candidate => objectTypes.get(candidate)).find(Boolean);
     if (!objectType) return null;
     return {
         name: callee.memberName,
@@ -659,6 +699,24 @@ function resolvePythonSelfMethod(
     };
 }
 
+function resolvePythonSuperMethod(
+    caller: IndexedSymbol,
+    memberName: string | undefined,
+    classMethods: PythonClassMethodMap,
+    classBases: PythonClassBaseMap,
+) {
+    const currentClass = caller.qualified_name?.split('.').slice(0, -1).join('.');
+    if (!currentClass || !memberName) return null;
+    const base = resolvePythonBaseMethod(currentClass, memberName, classMethods, classBases);
+    if (!base) return null;
+    return {
+        name: memberName,
+        qualifiedName: `${base.className}.${memberName}`,
+        filePath: base.filePath,
+        method: 'ast_python_super_method'
+    };
+}
+
 function resolvePythonBaseMethod(
     className: string,
     memberName: string,
@@ -669,11 +727,33 @@ function resolvePythonBaseMethod(
     if (seen.has(className)) return null;
     seen.add(className);
     for (const base of classBases.get(className) || []) {
-        if (classMethods.get(base.className)?.has(memberName)) return base;
+        if (classMethods.get(base.className)?.has(memberName) || pythonFileDeclaresClassMethod(base.filePath, base.className, memberName)) return base;
         const inherited = resolvePythonBaseMethod(base.className, memberName, classMethods, classBases, seen);
         if (inherited) return inherited;
     }
     return null;
+}
+
+function pythonFileDeclaresClassMethod(filePath: string | undefined, className: string, methodName: string) {
+    if (!filePath || !fs.existsSync(filePath)) return false;
+    const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
+    const classPattern = new RegExp(`^(\\s*)class\\s+${escapeRegex(className)}\\b`);
+    const methodPattern = new RegExp(`^\\s+(?:async\\s+def|def)\\s+${escapeRegex(methodName)}\\s*\\(`);
+    let classIndent = -1;
+
+    for (const line of lines) {
+        const classMatch = line.match(classPattern);
+        if (classMatch) {
+            classIndent = classMatch[1].length;
+            continue;
+        }
+        if (classIndent >= 0) {
+            const indent = line.match(/^(\s*)/)?.[1].length || 0;
+            if (line.trim() && indent <= classIndent) return false;
+            if (methodPattern.test(line)) return true;
+        }
+    }
+    return false;
 }
 
 function resolvePythonExportedTarget(importedName: string, sourceFilePath: string, seen = new Set<string>()): { name: string; filePath: string; method: string } {

@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-04-30T21:56:10.096Z",
+  "generated_at": "2026-04-30T22:41:21.481Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
-      "classic_chars": 23238,
-      "classic_tokens": 5810,
+      "classic_chars": 24336,
+      "classic_tokens": 6084,
       "mcp_chars": 200,
       "mcp_tokens": 50,
-      "token_savings_pct": 99.1,
+      "token_savings_pct": 99.2,
       "notes": "Find the callTool symbol with broad text search versus compact MCP symbol search.",
       "passed": true
     },
@@ -33,7 +33,7 @@
     },
     {
       "name": "language_depth_js_python_callers",
-      "notes": "JavaScript callers: checkout; Python same-file: checkout_py; Python async: checkout_async_py; Python from/re-export: checkout_external_py, checkout_reexport_py; Python module-import: checkout_module_py, checkout_nested_module_py; Python instance-method: checkout_instance_py; Python inherited-self: AdvancedCalculator.total.",
+      "notes": "JavaScript callers: checkout; Python same-file: checkout_py; Python async: checkout_async_py; Python from/re-export: checkout_external_py, checkout_reexport_py; Python module-import: checkout_module_py, checkout_nested_module_py; Python instance-method: checkout_instance_py; Python inherited-self: AdvancedCalculator.total; Python imported-base: RemoteAdvancedCalculator.total; Python super: SuperAdvancedCalculator.total; Python self-attribute instance: UsesWorker.execute.",
       "passed": true
     },
     {
@@ -83,12 +83,12 @@
     },
     {
       "name": "performance_scale_10k_symbols",
-      "notes": "Cold index: 7282ms for 1000 files/10001 symbols; search: 5.2ms; caller: 2.6ms; incremental: 178.3ms for 1 changed file; risk: 237.8ms for 26 changed files; db: 8.3MB.",
+      "notes": "Cold index: 7490ms for 1000 files/10001 symbols; search: 7.5ms; caller: 2.2ms; incremental: 207.9ms for 1 changed file; risk: 280.3ms for 26 changed files; db: 8.3MB.",
       "passed": true
     },
     {
       "name": "performance_monorepo_workspace",
-      "notes": "Cold index: 5285ms for 20 packages/800 files/4801 symbols; search: 2.5ms; caller: 1.4ms; incremental: 254.2ms for 1 changed file; risk: 165.6ms for 6 changed files; db: 12.5MB.",
+      "notes": "Cold index: 5049ms for 20 packages/800 files/4801 symbols; search: 3.1ms; caller: 1.7ms; incremental: 253.8ms for 1 changed file; risk: 168.2ms for 6 changed files; db: 12.5MB.",
       "passed": true
     }
   ]

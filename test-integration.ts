@@ -1005,6 +1005,7 @@ async function testLanguageDepth(db: TestDb, startIndexer: (projectPath: string,
     const jsFile = path.join(projectPath, 'src', 'cart.js');
     const pyFile = path.join(projectPath, 'src', 'cart.py');
     const pyPricingFile = path.join(projectPath, 'src', 'pricing.py');
+    const pyBaseFile = path.join(projectPath, 'src', 'base.py');
     const pyMoneyFile = path.join(projectPath, 'src', 'billing', 'money.py');
     const pyInitFile = path.join(projectPath, 'src', '__init__.py');
 
@@ -1036,6 +1037,18 @@ def calculate_external_total():
 class PriceCalculator:
     def total(self, value):
         return value
+
+class Worker:
+    def run(self):
+        return 1
+`);
+    writeFile(pyBaseFile, `
+class RemoteBaseCalculator:
+    def remote_total(self, value):
+        return value
+
+    def super_total(self, value):
+        return value
 `);
     writeFile(pyInitFile, 'from .pricing import calculate_external_total as exported_total\n');
     writeFile(pyMoneyFile, `
@@ -1045,6 +1058,8 @@ def round_money(value):
     writeFile(pyFile, `
 from .pricing import calculate_external_total as external_total
 from .pricing import PriceCalculator as Calculator
+from .pricing import Worker
+from .base import RemoteBaseCalculator
 from . import exported_total
 import billing.money as money
 import billing.money
@@ -1092,6 +1107,21 @@ class AdvancedCalculator(BaseCalculator):
     def total(self, value):
         return self.inherited_total(value)
 
+class RemoteAdvancedCalculator(RemoteBaseCalculator):
+    def total(self, value):
+        return self.remote_total(value)
+
+class SuperAdvancedCalculator(RemoteBaseCalculator):
+    def total(self, value):
+        return super().super_total(value)
+
+class UsesWorker:
+    def __init__(self):
+        self.worker = Worker()
+
+    def execute(self):
+        return self.worker.run()
+
 def mention_only_py():
     return "calculate_total"
 `);
@@ -1113,7 +1143,13 @@ def mention_only_py():
               .get(projectId, 'total', pyPricingFile);
             const pyInheritedTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'inherited_total', pyFile);
-            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget);
+            const pyRemoteTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'remote_total', pyBaseFile);
+            const pySuperTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'super_total', pyBaseFile);
+            const pyWorkerTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'run', pyPricingFile);
+            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget);
         });
 
         const jsTarget = db.prepare("SELECT id, language FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -1187,6 +1223,30 @@ def mention_only_py():
             min_confidence: 0.0
         }));
         assert(pyInheritedCallers.definite_callers.some(c => c.qualified_name === 'AdvancedCalculator.total' && c.resolution_method === 'ast_python_inherited_self_method'), 'Python inherited self.method calls should resolve to base class methods');
+
+        const pyRemoteTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'remote_total', pyBaseFile) as { id: string } | undefined;
+        const pyRemoteCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: pyRemoteTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(pyRemoteCallers.definite_callers.some(c => c.qualified_name === 'RemoteAdvancedCalculator.total' && c.resolution_method === 'ast_python_inherited_self_method'), 'Python imported base self.method calls should resolve cross-file base methods');
+
+        const pySuperTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'super_total', pyBaseFile) as { id: string } | undefined;
+        const pySuperCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: pySuperTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(pySuperCallers.definite_callers.some(c => c.qualified_name === 'SuperAdvancedCalculator.total' && c.resolution_method === 'ast_python_super_method'), 'Python super().method calls should resolve imported base methods');
+
+        const pyWorkerTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'run', pyPricingFile) as { id: string } | undefined;
+        const pyWorkerCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: pyWorkerTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(pyWorkerCallers.definite_callers.some(c => c.qualified_name === 'UsesWorker.execute' && c.resolution_method === 'ast_python_instance_method'), 'Python self.attr constructor assignments should resolve instance method callers');
     } finally {
         await watcher.close();
     }

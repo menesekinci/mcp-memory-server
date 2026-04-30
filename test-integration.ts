@@ -174,6 +174,24 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
         project_id: projectId
     });
     assert(missingSymbolId.content[0].text === 'Symbol not found.', 'missing symbol_id/ref should return a useful not-found message');
+
+    const malformedSearch = parseToolJson<any>(await callTool('code_search', {
+        project_id: projectId,
+        query: ''
+    }));
+    assert(malformedSearch.error === 'invalid_arguments', 'code_search should reject empty query strings');
+    const malformedChangedSince = parseToolJson<any>(await callTool('changed_since', {
+        project_id: projectId,
+        since: 'yesterday'
+    }));
+    assert(malformedChangedSince.error === 'invalid_arguments', 'changed_since should reject non-numeric since values');
+    const malformedMessage = parseToolJson<any>(await callTool('save_message', {
+        project_id: projectId,
+        role: 'system',
+        content: 'invalid role'
+    }));
+    assert(malformedMessage.error === 'invalid_arguments', 'save_message should reject unsupported roles');
+
     const historyWithoutBody = parseToolJson<any[]>(await callTool('get_symbol_history', {
         symbol_id: symbolId
     }));
@@ -674,9 +692,14 @@ async function testIndexerEdges(db: TestDb, startIndexer: (projectPath: string, 
     const projectPath = createTempDir('mcp-memory-indexer');
     const sourceFile = path.join(projectPath, 'src', 'math.ts');
     const secretFile = path.join(projectPath, 'src', 'secret.ts');
+    const stripeSecretFile = path.join(projectPath, 'src', 'billing.ts');
+    const ignoredFile = path.join(projectPath, 'tmp-cache', 'ignored.ts');
 
+    writeFile(path.join(projectPath, '.mcp-memoryignore'), 'tmp-cache/**\n*.generated.ts\n');
     writeFile(sourceFile, 'export function calculateTotal() { return 100; }\n');
     writeFile(secretFile, 'export const api_key = "1234567890abcdef";\n');
+    writeFile(stripeSecretFile, 'export const stripeKey = "sk_live_1234567890abcdef";\n');
+    writeFile(ignoredFile, 'export function ignoredByMemoryFile() { return 1; }\n');
 
     const watcher = startIndexer(projectPath, projectA);
     try {
@@ -686,12 +709,22 @@ async function testIndexerEdges(db: TestDb, startIndexer: (projectPath: string, 
             return Boolean(row);
         });
 
+        await waitFor(() => {
+            const row = db.prepare("SELECT COUNT(*) as count FROM files WHERE project_id = ? AND is_excluded = 1")
+              .get(projectA) as { count: number };
+            return row.count === 2;
+        });
         const excluded = parseToolJson<{ excluded_files: number; freshness: string; health: any }>(await callTool('index_status', {
             project_id: projectA,
             project_path: projectPath
         }));
-        assert(excluded.excluded_files === 1, 'index_status should count secret files as excluded');
+        assert(excluded.excluded_files === 2, 'index_status should count secret files as excluded');
         assert(excluded.freshness === 'fresh' && excluded.health.stale_files === 0, 'index_status should report a fresh index when tracked files match the working tree');
+        const ignoredResult = parseToolJson<any[]>(await callTool('lookup_symbol', {
+            project_id: projectA,
+            name: 'ignoredByMemoryFile'
+        }));
+        assert(ignoredResult.length === 0, '.mcp-memoryignore should prevent ignored files from being indexed');
 
         writeFile(path.join(projectPath, 'src', 'other.ts'), 'export function calculateTotal() { return 200; }\n');
         await waitFor(() => {
@@ -1137,11 +1170,13 @@ async function testGitAwareIncrementalIndexing(
     const fallbackOldPath = path.join(projectPath, 'src', 'fallback-old.ts');
     const fallbackNewPath = path.join(projectPath, 'src', 'fallback-new.ts');
     const buildOutputPath = path.join(projectPath, 'build', 'generated.ts');
+    const memoryIgnoredPath = path.join(projectPath, 'scratch', 'ignored.ts');
 
     execFileSync('git', ['init'], { cwd: projectPath, stdio: 'ignore' });
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: projectPath });
     execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: projectPath });
 
+    writeFile(path.join(projectPath, '.mcp-memoryignore'), 'scratch/**\n');
     writeFile(filePath, 'export function indexedOnce() { return 1; }\n');
     writeFile(deletedPath, 'export function deletedLater() { return 1; }\n');
     writeFile(movablePath, 'export function movedSymbol() { return 1; }\n');
@@ -1235,6 +1270,15 @@ async function testGitAwareIncrementalIndexing(
     const generatedSymbol = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0")
       .get(projectId, 'generatedBuildSymbol') as { id: string } | undefined;
     assert(!generatedSymbol, 'generated build output should not create active symbols');
+
+    writeFile(memoryIgnoredPath, 'export function ignoredScratchSymbol() { return 1; }\n');
+    const ignoredChanged = await reindexChangedFiles(projectPath, projectId);
+    assert(ignoredChanged.changed_files === 0, '.mcp-memoryignore output should be excluded from changed-file indexing');
+    const ignoredReconciled = await reconcileProjectFiles(projectPath, projectId);
+    assert(ignoredReconciled.scanned_files >= 4, 'reconcileProjectFiles should keep scanning normal source files while honoring .mcp-memoryignore');
+    const ignoredScratchSymbol = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0")
+      .get(projectId, 'ignoredScratchSymbol') as { id: string } | undefined;
+    assert(!ignoredScratchSymbol, '.mcp-memoryignore output should not create active symbols during reconciliation');
 
     writeFile(filePath, 'export function indexedOnce() { return 2; }\n');
     const changed = await reindexChangedFiles(projectPath, projectId);

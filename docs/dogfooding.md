@@ -31,7 +31,7 @@ This report records the v0.3 validation work performed on this repository.
 
 ## Real Repository Dogfooding
 
-`npm run dogfood:real` clones shallow copies of real open-source repositories into the system temp directory, indexes supported source files into an isolated temporary SQLite database, then runs the high-level agent flow:
+`npm run dogfood:real` clones shallow copies of real open-source repositories into the system temp directory, indexes supported source files into an isolated temporary SQLite database, then runs the high-level agent flow. The current set covers Express, Zod, Typer, Click, Requests, Flask, Axios, and p-limit:
 
 ```text
 code_search -> read_context -> impact_analysis -> index_status
@@ -41,11 +41,14 @@ Latest run:
 
 | Repo | Source Files | Symbols | Query | Classic Tokens | MCP Tokens | Freshness |
 | --- | ---: | ---: | --- | ---: | ---: | --- |
-| expressjs/express | 141 | 88 | `test` | 21105 | 363 | fresh |
-| colinhacks/zod | 400 | 1385 | `ZodObject` | 6748 | 423 | fresh |
-| fastapi/typer | 603 | 1573 | `Typer` | 18240 | 374 | fresh |
-| pallets/click | 63 | 1369 | `Command` | 6994 | 349 | fresh |
-| psf/requests | 36 | 734 | `Session` | 2574 | 376 | fresh |
+| expressjs/express | 141 | 86 | `test` | 21105 | 368 | fresh |
+| colinhacks/zod | 400 | 1384 | `ZodObject` | 6748 | 428 | fresh |
+| fastapi/typer | 603 | 1568 | `Typer` | 18240 | 379 | fresh |
+| pallets/click | 63 | 1313 | `Command` | 6994 | 354 | fresh |
+| psf/requests | 36 | 734 | `Session` | 2574 | 381 | fresh |
+| pallets/flask | 83 | 1361 | `Flask` | 13549 | 375 | fresh |
+| axios/axios | 194 | 532 | `Axios` | 29611 | 375 | fresh |
+| sindresorhus/p-limit | 6 | 37 | `pLimit` | 1359 | 113 | fresh |
 
 Artifacts are written to:
 

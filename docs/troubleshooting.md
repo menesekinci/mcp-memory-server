@@ -7,6 +7,7 @@ Check:
 - `PROJECT_PATH` points to the repository root.
 - The project has supported files: `.ts`, `.tsx`, `.js`, `.jsx`, or `.py`.
 - Files are not under ignored directories such as `.git`, `node_modules`, or `dist`.
+- Files are not excluded by `.mcp-memoryignore`.
 - Files are not excluded by secret detection.
 
 ## MCP Tool Is Not Available In Codex
@@ -74,4 +75,24 @@ Override:
 
 ```powershell
 $env:MCP_MEMORY_DB_PATH="C:\Users\you\.mcp-memory-server\memory.db"
+```
+
+## Excluding Paths
+
+Add `.mcp-memoryignore` at the project root:
+
+```text
+tmp/**
+*.generated.ts
+fixtures/secrets/**
+```
+
+Ignored files are skipped by watcher indexing, changed-file indexing, and full reconciliation.
+
+## Secret Detection
+
+Secret filtering is best-effort. The indexer excludes obvious secret files and common embedded token patterns such as API keys, GitHub tokens, AWS access keys, Stripe/OpenAI-style keys, Slack tokens, and private key blocks. For repositories with sensitive source bodies, also run with:
+
+```powershell
+$env:MCP_MEMORY_DISABLE_BODY_STORAGE="1"
 ```

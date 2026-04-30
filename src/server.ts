@@ -319,6 +319,8 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
   const args = rawArgs;
 
   if (name === "code_search") {
+    const invalid = requireStringArg(args, 'query');
+    if (invalid) return invalid;
     const projectName = args.project_id || 'default';
     const results = rankedCodeSearch({
       projectId: projectName,
@@ -395,6 +397,8 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
   }
 
   if (name === "lookup_symbol") {
+    const invalid = requireStringArg(args, 'name');
+    if (invalid) return invalid;
     const projectName = args.project_id || 'default';
     const symbolName = args.name;
     const symbols = db.prepare("SELECT * FROM symbols WHERE name = ? AND project_id = ? AND is_deleted = 0").all(symbolName, projectName) as SymbolRow[];
@@ -407,6 +411,8 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
   }
 
   if (name === "search_symbols") {
+    const invalid = requireStringArg(args, 'query');
+    if (invalid) return invalid;
     const projectName = args.project_id || 'default';
     const query = `%${args.query || ''}%`;
     const limit = args.limit || 20;
@@ -474,6 +480,9 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
   if (name === "changed_since") {
     const projectName = args.project_id || 'default';
     const since = args.since;
+    if (typeof since !== 'number' || !Number.isFinite(since)) {
+      return invalidArgs('changed_since requires numeric since');
+    }
     const symbols = db.prepare("SELECT * FROM symbols WHERE project_id = ? AND updated_at > ? AND is_deleted = 0")
       .all(projectName, since) as SymbolRow[];
     return {
@@ -623,6 +632,11 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
   }
 
   if (name === "save_message") {
+    if (args.role !== 'user' && args.role !== 'agent') {
+      return invalidArgs('save_message requires role to be user or agent');
+    }
+    const invalid = requireStringArg(args, 'content');
+    if (invalid) return invalid;
     const { session_id, role, content, explicit_symbols = [] } = args;
     const messageId = uuidv4();
     const now = Date.now();
@@ -659,6 +673,8 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
   }
 
   if (name === "search_history") {
+    const invalid = requireStringArg(args, 'query');
+    if (invalid) return invalid;
     const query = args.query;
     const results = db.prepare(`
         SELECT m.id, m.content, m.created_at 
@@ -677,6 +693,10 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
   }
 
   if (name === "save_decision") {
+    const invalidProject = requireStringArg(args, 'project_id');
+    if (invalidProject) return invalidProject;
+    const invalidSummary = requireStringArg(args, 'summary');
+    if (invalidSummary) return invalidSummary;
     const { project_id, summary, rationale, source_session, related_symbols = [] } = args;
     const decisionId = uuidv4();
     const now = Date.now();
@@ -708,6 +728,8 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
   }
 
   if (name === "get_decisions") {
+    const invalid = requireStringArg(args, 'project_id');
+    if (invalid) return invalid;
     const { project_id, symbol, status = 'active' } = args;
     let query = "SELECT * FROM project_decisions WHERE project_id = ?";
     const params: any[] = [project_id];
@@ -828,6 +850,17 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
   }
 
   throw new Error(`Tool not found: ${name}`);
+}
+
+function invalidArgs(message: string) {
+  return { content: [{ type: "text", text: JSON.stringify({ error: "invalid_arguments", message }) }] };
+}
+
+function requireStringArg(args: Record<string, any>, key: string) {
+  if (typeof args[key] !== 'string' || args[key].trim().length === 0) {
+    return invalidArgs(`${key} must be a non-empty string`);
+  }
+  return undefined;
 }
 
 function formatSymbol(symbol: SymbolRow, options: { includeBody: boolean; verbose: boolean }) {

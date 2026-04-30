@@ -15,7 +15,10 @@ const repos: RepoCase[] = [
     { name: 'zod', url: 'https://github.com/colinhacks/zod.git', queryHint: 'ZodObject' },
     { name: 'typer', url: 'https://github.com/fastapi/typer.git', queryHint: 'Typer' },
     { name: 'click', url: 'https://github.com/pallets/click.git', queryHint: 'Command' },
-    { name: 'requests', url: 'https://github.com/psf/requests.git', queryHint: 'Session' }
+    { name: 'requests', url: 'https://github.com/psf/requests.git', queryHint: 'Session' },
+    { name: 'flask', url: 'https://github.com/pallets/flask.git', queryHint: 'Flask' },
+    { name: 'axios', url: 'https://github.com/axios/axios.git', queryHint: 'Axios' },
+    { name: 'p-limit', url: 'https://github.com/sindresorhus/p-limit.git', queryHint: 'pLimit' }
 ];
 
 const supportedSource = /\.(ts|tsx|js|jsx|py)$/;

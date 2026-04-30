@@ -22,10 +22,10 @@ Agents often spend a lot of tokens finding the right file or function before rea
 Current benchmark task: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=5488
+classic_tokens=5625
 mcp_tokens=50
 savings=99.1%
-smaller_output=109.8x
+smaller_output=112.5x
 ```
 
 Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
@@ -40,7 +40,7 @@ Real repository dogfooding is available with:
 npm run dogfood:real
 ```
 
-It clones a small set of real open-source repositories into the system temp directory and writes reports under `dogfood/results/`.
+It clones a small set of real open-source repositories into the system temp directory and writes reports under `dogfood/results/`. The current dogfood set covers Express, Zod, Typer, Click, Requests, Flask, Axios, and p-limit.
 
 ## Quick Start
 
@@ -169,5 +169,6 @@ npm publish --access public
 - Discovery results and body reads expose freshness metadata so stale index state is visible instead of silent.
 - Full source remains available through `get_symbol_body`.
 - Set `MCP_MEMORY_DISABLE_BODY_STORAGE=1` for metadata-only indexing when source bodies should not be persisted in SQLite.
+- Add `.mcp-memoryignore` at the project root to exclude generated or sensitive paths from indexing.
 - `find_callers` returns AST definite callers and fuzzy probable callers.
 - v0.4.x development is focused on v1.0 hardening: real-repository validation, stronger tool contracts, performance stability, setup verification, and release discipline.

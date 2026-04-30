@@ -21,6 +21,7 @@ const LANGUAGES = {
 };
 
 const IGNORED_PATH_PATTERN = /(^|[\/\\])(\.git|node_modules|dist|build|coverage)([\/\\]|$)/;
+const ignoreCache = new Map<string, string[]>();
 
 class IndexWorkerPool {
     private queue: string[] = [];
@@ -60,7 +61,7 @@ export function startIndexer(projectPath: string, projectId = 'default') {
     console.error(`Indexing project: ${projectPath}`);
 
     const watcher = chokidar.watch(projectPath, {
-        ignored: (filePath) => IGNORED_PATH_PATTERN.test(filePath),
+        ignored: (filePath) => isIgnoredProjectPath(filePath, projectPath),
         persistent: true,
     });
 
@@ -107,6 +108,7 @@ export async function indexFile(filePath: string, projectId = 'default', options
     const ext = path.extname(filePath);
     const langConfig = LANGUAGES[ext];
     if (!langConfig) return { indexed: false, skipped: true, reason: 'unsupported' };
+    if (isIgnoredProjectPath(filePath)) return { indexed: false, skipped: true, reason: 'ignored' };
     if (!fs.existsSync(filePath)) {
         markFileDeleted(filePath, projectId);
         return { indexed: false, skipped: false, reason: 'deleted' };
@@ -227,7 +229,7 @@ export async function reindexChangedFiles(projectPath: string, projectId = 'defa
 export function listChangedSourceFiles(projectPath: string) {
     return [...new Set(gitChangedFiles(projectPath)
         .map(file => path.resolve(projectPath, file))
-        .filter(file => !isIgnoredProjectPath(file) && isSupportedSourceFile(file)))];
+        .filter(file => !isIgnoredProjectPath(file, projectPath) && isSupportedSourceFile(file)))];
 }
 
 export type FileFreshness = {
@@ -389,13 +391,33 @@ function fileRecordId(projectId: string, filePath: string) {
 }
 
 function isSecretFile(filePath: string) {
-    const secretPatterns = [/\.env/, /secret/, /credential/, /token/, /\.pem$/, /\.key$/];
-    return secretPatterns.some(pattern => pattern.test(filePath));
+    const normalized = filePath.replace(/\\/g, '/').toLowerCase();
+    const secretPatterns = [
+        /(^|\/)\.env([./-]|$)/,
+        /secret/,
+        /credential/,
+        /token/,
+        /private[_-]?key/,
+        /id_rsa/,
+        /\.pem$/,
+        /\.key$/,
+        /\.p12$/,
+        /\.pfx$/
+    ];
+    return secretPatterns.some(pattern => pattern.test(normalized));
 }
 
 function containsSecrets(content: string) {
-    const secretRegex = /(api[_-]?key|token|password|secret)\s*=\s*['"][^'"]{8,}['"]/i;
-    return secretRegex.test(content);
+    const secretPatterns = [
+        /(api[_-]?key|token|password|secret|client[_-]?secret|private[_-]?key)\s*[:=]\s*['"][^'"]{8,}['"]/i,
+        /AKIA[0-9A-Z]{16}/,
+        /gh[pousr]_[A-Za-z0-9_]{30,}/,
+        /sk[_-](live|test)[_-][A-Za-z0-9]{16,}/,
+        /sk-proj-[A-Za-z0-9_-]{20,}/,
+        /xox[baprs]-[A-Za-z0-9-]{20,}/,
+        /-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/
+    ];
+    return secretPatterns.some(pattern => pattern.test(content));
 }
 
 function isSupportedSourceFile(filePath: string) {
@@ -409,7 +431,7 @@ function collectSupportedSourceFiles(projectPath: string) {
         if (!fs.existsSync(dir)) return;
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
             const fullPath = path.join(dir, entry.name);
-            if (isIgnoredProjectPath(fullPath)) continue;
+            if (isIgnoredProjectPath(fullPath, root)) continue;
             if (entry.isDirectory()) walk(fullPath);
             else if (isSupportedSourceFile(fullPath)) files.push(fullPath);
         }
@@ -418,8 +440,73 @@ function collectSupportedSourceFiles(projectPath: string) {
     return files;
 }
 
-function isIgnoredProjectPath(filePath: string) {
-    return IGNORED_PATH_PATTERN.test(filePath);
+function isIgnoredProjectPath(filePath: string, projectPath?: string) {
+    if (IGNORED_PATH_PATTERN.test(filePath)) return true;
+    const ignoreRoot = projectPath ? path.resolve(projectPath) : findIgnoreRoot(filePath);
+    if (!ignoreRoot) return false;
+    const patterns = readMcpMemoryIgnore(ignoreRoot);
+    if (patterns.length === 0) return false;
+    const relative = path.relative(ignoreRoot, filePath).replace(/\\/g, '/');
+    if (relative.startsWith('..')) return false;
+    return patterns.some(pattern => ignorePatternMatches(pattern, relative));
+}
+
+function findIgnoreRoot(filePath: string) {
+    let dir = fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()
+        ? path.resolve(filePath)
+        : path.dirname(path.resolve(filePath));
+    while (true) {
+        if (fs.existsSync(path.join(dir, '.mcp-memoryignore'))) return dir;
+        const parent = path.dirname(dir);
+        if (parent === dir) return undefined;
+        dir = parent;
+    }
+}
+
+function readMcpMemoryIgnore(projectPath: string) {
+    const ignorePath = path.join(projectPath, '.mcp-memoryignore');
+    if (!fs.existsSync(ignorePath)) return [];
+    const stat = fs.statSync(ignorePath);
+    const cacheKey = `${ignorePath}:${stat.mtimeMs}`;
+    const cached = ignoreCache.get(cacheKey);
+    if (cached) return cached;
+    for (const key of ignoreCache.keys()) {
+        if (key.startsWith(`${ignorePath}:`)) ignoreCache.delete(key);
+    }
+    const patterns = fs.readFileSync(ignorePath, 'utf8')
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(line => line.length > 0 && !line.startsWith('#'))
+        .map(line => line.replace(/\\/g, '/').replace(/^\/+/, ''));
+    ignoreCache.set(cacheKey, patterns);
+    return patterns;
+}
+
+function ignorePatternMatches(pattern: string, relativePath: string) {
+    const normalized = relativePath.replace(/\\/g, '/');
+    const directoryPattern = pattern.endsWith('/') ? `${pattern}**` : pattern;
+    const regex = globToRegExp(directoryPattern);
+    return regex.test(normalized) || regex.test(path.basename(normalized));
+}
+
+function globToRegExp(pattern: string) {
+    let regex = '^';
+    for (let i = 0; i < pattern.length; i++) {
+        const char = pattern[i];
+        const next = pattern[i + 1];
+        if (char === '*' && next === '*') {
+            regex += '.*';
+            i++;
+        } else if (char === '*') {
+            regex += '[^/]*';
+        } else if (char === '?') {
+            regex += '[^/]';
+        } else {
+            regex += char.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
+        }
+    }
+    regex += '$';
+    return new RegExp(regex);
 }
 
 function gitBlobSha(content: string) {

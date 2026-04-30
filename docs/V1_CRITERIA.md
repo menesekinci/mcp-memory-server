@@ -54,7 +54,7 @@ v1.0 should mean the project is reliable enough for agents to use as their first
 
 ## P6 - Privacy And Setup
 
-- Provide `.mcp-memoryignore`.
+- Provide `.mcp-memoryignore`. Current baseline supports project-root ignore patterns for watcher, changed-file, and reconciliation indexing.
 - Provide metadata-only/body-storage controls. Current baseline supports `MCP_MEMORY_DISABLE_BODY_STORAGE=1`.
-- Strengthen best-effort secret filtering and document its limitations.
+- Strengthen best-effort secret filtering and document its limitations. Current baseline covers obvious secret paths plus common API key, GitHub token, AWS, Stripe/OpenAI, Slack token, and private-key block patterns.
 - Add `doctor`/setup verification for Node, package version, DB path, project path, MCP registration, and runtime readiness. Current baseline includes `mcp-memory-doctor` for local readiness checks.

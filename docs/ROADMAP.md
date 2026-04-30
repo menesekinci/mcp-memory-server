@@ -98,9 +98,9 @@ See also [Product Vision](VISION.md) and [v1.0 Criteria](V1_CRITERIA.md). The cu
 
 ## Phase 11 - Memory Quality
 
-- [ ] Add stale/needs-review decision semantics tied to changed symbols.
-- [ ] Distinguish current decisions from historical context in memory reads.
-- [ ] Add memory conflict and supersession tests.
+- [x] Add stale/needs-review decision semantics tied to changed symbols.
+- [x] Distinguish current decisions from historical context in memory reads.
+- [x] Add memory conflict and supersession tests.
 
 ## Phase 12 - Real Repository Proof
 

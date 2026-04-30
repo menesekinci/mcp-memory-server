@@ -300,6 +300,14 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
     assert(impact.risk_level === 'medium', 'impact_analysis should raise risk when callers or decisions are linked');
     assert(impact.related_decisions.some((decision: any) => decision.summary.includes('billing total boundary')), 'impact_analysis should include linked decisions');
 
+    db.prepare("UPDATE symbols SET updated_at = ? WHERE id = ?").run(Date.now() + 1000, symbolId);
+    const reviewDecisions = parseToolJson<any[]>(await callTool('get_decisions', {
+        project_id: projectId,
+        symbol: 'calculateTotal'
+    }));
+    assert(reviewDecisions[0].memory_state === 'needs_review', 'get_decisions should mark decisions as needs_review when linked symbols changed after the decision');
+    assert(reviewDecisions[0].stale_symbols.some((symbol: any) => symbol.name === 'calculateTotal'), 'needs_review decisions should explain which linked symbols changed');
+
     const context = parseToolJson<{ active_decisions: any[] }>(await callTool('context_since_last_session', {
         project_id: projectId
     }));
@@ -320,6 +328,20 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
         status: 'all'
     }));
     assert(allDecisions.length === 1 && allDecisions[0].status === 'superseded', 'forget_session raw_and_derived should supersede derived decisions');
+
+    db.prepare("UPDATE symbols SET updated_at = ? WHERE id = ?").run(Date.now() - 1000, symbolId);
+    await callTool('save_decision', {
+        project_id: projectId,
+        summary: 'Replacement billing boundary decision',
+        related_symbols: ['calculateTotal'],
+        supersedes_decision_id: allDecisions[0].id
+    });
+    const supersession = parseToolJson<any[]>(await callTool('get_decisions', {
+        project_id: projectId,
+        status: 'all'
+    }));
+    assert(supersession.some(decision => decision.summary === 'Replacement billing boundary decision' && decision.memory_state === 'current'), 'save_decision should create a current replacement decision');
+    assert(supersession.some(decision => decision.id === allDecisions[0].id && decision.superseded_by), 'save_decision should link superseded decisions to their replacement');
 
     let unknownToolFailed = false;
     try {
@@ -591,7 +613,7 @@ const requiredColumns = {
   symbol_history: ['branch', 'pr_reference'],
   files: ['git_blob_sha', 'is_excluded'],
   sessions: ['title', 'tags'],
-  project_decisions: ['superseded_by', 'confidence'],
+  project_decisions: ['superseded_by', 'confidence', 'review_required_at', 'review_reason'],
   symbol_calls: ['target_file_path']
 };
 for (const [table, columns] of Object.entries(requiredColumns)) {
@@ -1178,6 +1200,7 @@ async function testGitAwareIncrementalIndexing(
     }));
     assert(risk.changed_symbols.some(symbol => symbol.name === 'viaTool'), 'changed_symbols_risk should include symbols from changed files');
     assert(risk.related_decisions.some(decision => decision.summary === 'Review viaTool when changed'), 'changed_symbols_risk should include decisions linked to changed symbols');
+    assert(risk.related_decisions.some(decision => decision.summary === 'Review viaTool when changed' && decision.memory_state === 'needs_review'), 'changed_symbols_risk should mark linked decisions as needs_review');
 
     const status = parseToolJson<{ hashed_files: number; indexed_files: number }>(await callTool('index_status', {
         project_id: projectId

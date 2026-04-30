@@ -55,11 +55,13 @@ These tools accept `max_tokens`. The server estimates JSON size with `characters
 | `save_message` | Store a conversation message and link mentioned symbols. Auto-creates a project session when `session_id` is omitted or unknown. |
 | `search_history` | Full-text search saved messages. |
 | `save_decision` | Store a project decision and link symbols. |
-| `get_decisions` | Read saved decisions, optionally filtered by symbol/status. |
+| `get_decisions` | Read saved decisions, optionally filtered by symbol/status. Results include `memory_state` as `current`, `needs_review`, or `superseded`. |
 | `symbols_discussed_and_changed` | Find discussed symbols that changed later. |
 | `find_regression_candidates` | Find changed symbols that were previously discussed. |
 | `context_since_last_session` | Summarize changes and active decisions since the last session. |
 | `forget_session` | Delete raw session data and optionally supersede derived decisions. |
+
+Decision reads mark linked decisions as `needs_review` when a referenced symbol changed after the decision was made. `save_decision` can supersede an earlier decision with `supersedes_decision_id`.
 
 ## Recommended Discovery Pattern
 

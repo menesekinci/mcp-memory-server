@@ -243,6 +243,7 @@ export async function listTools() {
             summary: { type: "string" },
             rationale: { type: "string" },
             source_session: { type: "string" },
+            supersedes_decision_id: { type: "string" },
             related_symbols: { type: "array", items: { type: "string" } }
           },
           required: ["project_id", "summary"],
@@ -256,7 +257,7 @@ export async function listTools() {
           properties: {
             project_id: { type: "string", default: "default" },
             symbol: { type: "string" },
-            status: { type: "string", enum: ["active", "superseded", "all"], default: "active" }
+            status: { type: "string", enum: ["active", "under_review", "superseded", "all"], default: "active" }
           },
           required: ["project_id"],
         },
@@ -592,14 +593,17 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
         .map(symbol => formatSymbol(symbol, { includeBody: false, verbose: false }));
     });
     const changedSymbolIds = changedSymbols.map((symbol: any) => resolveSymbolIdFromRef(symbol.ref, projectName)).filter(Boolean);
-    const decisions = changedSymbolIds.length === 0 ? [] : db.prepare(`
+    if (changedSymbolIds.length > 0) {
+      markDecisionsForReview(projectName, changedSymbolIds, 'linked_symbol_changed_in_working_tree');
+    }
+    const decisions = changedSymbolIds.length === 0 ? [] : decorateDecisions(db.prepare(`
       SELECT DISTINCT d.id, d.summary, d.status, d.confidence, d.decided_at
       FROM project_decisions d
       JOIN decision_symbol_references dsr ON d.id = dsr.decision_id
       WHERE d.project_id = ?
       AND dsr.symbol_id IN (${changedSymbolIds.map(() => '?').join(',')})
       ORDER BY d.decided_at DESC
-    `).all(projectName, ...changedSymbolIds);
+    `).all(projectName, ...changedSymbolIds), projectName);
 
     return {
       content: [{ type: "text", text: JSON.stringify({
@@ -669,11 +673,15 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
     const decisionId = uuidv4();
     const now = Date.now();
 
-    db.prepare("INSERT INTO project_decisions (id, project_id, summary, rationale, decided_at, source_session, status) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(decisionId, project_id, summary, rationale, now, source_session, 'active');
-
-    const insertSymbolRef = db.prepare("INSERT INTO decision_symbol_references (decision_id, symbol_id) VALUES (?, ?)");
     const transaction = db.transaction((symbols: string[]) => {
+        db.prepare("INSERT INTO project_decisions (id, project_id, summary, rationale, decided_at, source_session, status) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .run(decisionId, project_id, summary, rationale, now, source_session, 'active');
+
+        if (args.supersedes_decision_id) {
+            db.prepare("UPDATE project_decisions SET status = 'superseded', superseded_by = ? WHERE id = ? AND project_id = ?")
+              .run(decisionId, args.supersedes_decision_id, project_id);
+        }
+
         for (const symName of symbols) {
             const symbol = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND is_deleted = 0 LIMIT 1")
               .get(project_id, symName) as Pick<SymbolRow, 'id'> | undefined;
@@ -682,6 +690,8 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
             }
         }
     });
+
+    const insertSymbolRef = db.prepare("INSERT INTO decision_symbol_references (decision_id, symbol_id) VALUES (?, ?)");
     transaction(related_symbols);
 
     return {
@@ -694,22 +704,26 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
     let query = "SELECT * FROM project_decisions WHERE project_id = ?";
     const params: any[] = [project_id];
 
-    if (status !== 'all') {
+    if (status === 'active') {
+      query += " AND status IN ('active', 'under_review')";
+    } else if (status !== 'all') {
       query += " AND status = ?";
       params.push(status);
     }
 
     if (symbol) {
+        params.splice(1);
         query = `
             SELECT d.* FROM project_decisions d
             JOIN decision_symbol_references dsr ON d.id = dsr.decision_id
             JOIN symbols s ON dsr.symbol_id = s.id
-            WHERE d.project_id = ? ${status !== 'all' ? 'AND d.status = ?' : ''} AND s.name = ?
+            WHERE d.project_id = ? ${status === 'active' ? "AND d.status IN ('active', 'under_review')" : status !== 'all' ? 'AND d.status = ?' : ''} AND s.name = ?
         `;
+        if (status !== 'all' && status !== 'active') params.push(status);
         params.push(symbol);
     }
 
-    const decisions = db.prepare(query).all(...params);
+    const decisions = decorateDecisions(db.prepare(query).all(...params), project_id);
     return {
       content: [{ type: "text", text: JSON.stringify(decisions) }],
     };
@@ -1013,7 +1027,7 @@ function resolveActiveSymbol(symbolId: string | undefined, ref: string | undefin
 
 function decisionsForSymbolIds(projectId: string, symbolIds: string[]) {
   if (symbolIds.length === 0) return [];
-  return db.prepare(`
+  return decorateDecisions(db.prepare(`
     SELECT DISTINCT d.id, d.summary, d.rationale, d.status, d.confidence, d.decided_at
     FROM project_decisions d
     JOIN decision_symbol_references dsr ON d.id = dsr.decision_id
@@ -1021,19 +1035,65 @@ function decisionsForSymbolIds(projectId: string, symbolIds: string[]) {
     AND dsr.symbol_id IN (${symbolIds.map(() => '?').join(',')})
     ORDER BY d.status = 'active' DESC, d.decided_at DESC
     LIMIT 20
-  `).all(projectId, ...symbolIds);
+  `).all(projectId, ...symbolIds), projectId);
 }
 
 function findDecisionMatches(projectId: string, query: string, limit: number) {
   const like = `%${query}%`;
-  return db.prepare(`
-    SELECT id, summary, status, confidence, decided_at
+  return decorateDecisions(db.prepare(`
+    SELECT id, summary, status, confidence, decided_at, review_required_at, review_reason, superseded_by
     FROM project_decisions
     WHERE project_id = ?
     AND (summary LIKE ? OR rationale LIKE ?)
     ORDER BY decided_at DESC
     LIMIT ?
-  `).all(projectId, like, like, limit);
+  `).all(projectId, like, like, limit), projectId);
+}
+
+function decorateDecisions(decisions: any[], projectId: string) {
+  return decisions.map(decision => {
+    const linkedSymbols = db.prepare(`
+      SELECT s.id, s.name, s.qualified_name, s.updated_at
+      FROM symbols s
+      JOIN decision_symbol_references dsr ON s.id = dsr.symbol_id
+      WHERE dsr.decision_id = ?
+      AND s.project_id = ?
+      ORDER BY s.qualified_name
+    `).all(decision.id, projectId) as Array<{ id: string; name: string; qualified_name: string; updated_at: number }>;
+    const changedAfterDecision = linkedSymbols.filter(symbol => symbol.updated_at > decision.decided_at);
+    const needsReview = decision.review_required_at || changedAfterDecision.length > 0 || decision.status === 'under_review';
+    return {
+      ...decision,
+      memory_state: decision.status === 'superseded' ? 'superseded' : needsReview ? 'needs_review' : 'current',
+      review_required_at: decision.review_required_at || (changedAfterDecision.length > 0 ? Math.max(...changedAfterDecision.map(symbol => symbol.updated_at)) : null),
+      review_reason: decision.review_reason || (changedAfterDecision.length > 0 ? 'linked_symbol_changed_after_decision' : null),
+      stale_symbols: changedAfterDecision.map(symbol => ({
+        symbol_id: symbol.id,
+        name: symbol.name,
+        qualified_name: symbol.qualified_name,
+        updated_at: symbol.updated_at
+      }))
+    };
+  });
+}
+
+function markDecisionsForReview(projectId: string, symbolIds: string[], reason: string) {
+  if (symbolIds.length === 0) return 0;
+  const now = Date.now();
+  const result = db.prepare(`
+    UPDATE project_decisions
+    SET status = CASE WHEN status = 'active' THEN 'under_review' ELSE status END,
+        review_required_at = COALESCE(review_required_at, ?),
+        review_reason = COALESCE(review_reason, ?)
+    WHERE project_id = ?
+    AND status = 'active'
+    AND id IN (
+      SELECT decision_id
+      FROM decision_symbol_references
+      WHERE symbol_id IN (${symbolIds.map(() => '?').join(',')})
+    )
+  `).run(now, reason, projectId, ...symbolIds);
+  return result.changes;
 }
 
 function findHistoryMatches(projectId: string, query: string, limit: number) {

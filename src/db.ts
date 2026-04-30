@@ -153,6 +153,8 @@ export function initDb() {
     ensureColumn('sessions', 'tags', 'TEXT');
     ensureColumn('project_decisions', 'superseded_by', 'TEXT REFERENCES project_decisions(id)');
     ensureColumn('project_decisions', 'confidence', 'REAL DEFAULT 1.0');
+    ensureColumn('project_decisions', 'review_required_at', 'INTEGER');
+    ensureColumn('project_decisions', 'review_reason', 'TEXT');
     ensureColumn('symbol_calls', 'target_file_path', 'TEXT');
 
     db.exec(`

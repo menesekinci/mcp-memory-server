@@ -24,6 +24,7 @@
     "test:faz0": "ts-node test-faz0.ts",
     "test:integration": "ts-node test-integration.ts",
     "benchmark": "ts-node scripts/benchmark.ts",
+    "dogfood:real": "ts-node scripts/dogfood-real-repos.ts",
     "smoke:setup": "ts-node scripts/smoke-setup-helper.ts",
     "smoke:npx": "ts-node scripts/smoke-npx-runtime.ts",
     "test": "npm run typecheck && npm run test:faz0 && npm run test:integration",

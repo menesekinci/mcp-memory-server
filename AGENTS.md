@@ -137,6 +137,7 @@ When an item is completed, move its concrete result into Completed Validation No
 - Phase 10 now has a first high-level agent context layer: `code_search` ranks compact matches with `why_this_matched`, `read_context` returns one focused symbol packet, and `impact_analysis` summarizes callers, freshness, and linked-decision risk without forcing agents through several low-level calls.
 - Phase 10 token budgets are now first-class on high-level context tools through `max_tokens`; outputs include budget metadata and trim optional context before exceeding the requested budget.
 - Phase 11 memory quality now marks decisions as `current`, `needs_review`, or `superseded`; linked symbol changes trigger review metadata, `changed_symbols_risk` marks affected decisions under review, and replacement decisions can set `supersedes_decision_id`.
+- Phase 12 real-repository dogfooding now runs through `npm run dogfood:real` against Express, Zod, Typer, Click, and Requests. It records reports under `dogfood/results/` and converted real findings into project-relative path ranking, quieter TypeScript checker resolution, and isolated dogfood databases.
 
 ## Verification
 

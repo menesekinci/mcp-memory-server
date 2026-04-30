@@ -28,3 +28,34 @@ This report records the v0.3 validation work performed on this repository.
 - Branch checkout, merge, rewrite, rename, delete/restore, generated output ignore, project isolation, tool contract, and legacy DB compatibility were converted to integration tests.
 - Bug-fix narrowing, root symbol selection, refactor impact, regression narrowing, PR risk summary, discovery workload, and 10k-symbol scale behavior were converted to benchmarks.
 - NPX runtime startup was converted to `npm run smoke:npx` and wired into release smoke CI.
+
+## Real Repository Dogfooding
+
+`npm run dogfood:real` clones shallow copies of real open-source repositories into the system temp directory, indexes supported source files into an isolated temporary SQLite database, then runs the high-level agent flow:
+
+```text
+code_search -> read_context -> impact_analysis -> index_status
+```
+
+Latest run:
+
+| Repo | Source Files | Symbols | Query | Classic Tokens | MCP Tokens | Freshness |
+| --- | ---: | ---: | --- | ---: | ---: | --- |
+| expressjs/express | 141 | 88 | `test` | 21105 | 363 | fresh |
+| colinhacks/zod | 400 | 1385 | `ZodObject` | 6748 | 423 | fresh |
+| fastapi/typer | 603 | 1573 | `Typer` | 18240 | 374 | fresh |
+| pallets/click | 63 | 1369 | `Command` | 6994 | 349 | fresh |
+| psf/requests | 36 | 734 | `Session` | 2574 | 376 | fresh |
+
+Artifacts are written to:
+
+```text
+dogfood/results/latest.json
+dogfood/results/latest.md
+```
+
+Findings converted from this pass:
+
+- `code_search` no longer ranks symbols by matching the absolute project root path. Real Typer dogfooding showed that querying `Typer` could match every file under a `typer` checkout and select an unrelated docs JavaScript symbol. Ranking now uses project-relative paths for path matching.
+- TypeScript checker resolution now forces `traceResolution: false` so real repositories with verbose tsconfig settings do not flood dogfooding output.
+- Real dogfooding now uses an isolated temporary SQLite database so validation does not pollute a user's local MCP memory.

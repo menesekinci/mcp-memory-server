@@ -1,10 +1,10 @@
 {
-  "generated_at": "2026-04-30T11:45:02.966Z",
+  "generated_at": "2026-04-30T12:09:02.795Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
-      "classic_chars": 20093,
-      "classic_tokens": 5024,
+      "classic_chars": 20775,
+      "classic_tokens": 5194,
       "mcp_chars": 200,
       "mcp_tokens": 50,
       "token_savings_pct": 99,
@@ -83,12 +83,12 @@
     },
     {
       "name": "performance_scale_10k_symbols",
-      "notes": "Cold index: 5174ms for 1000 files/10001 symbols; search: 4.5ms; caller: 2.1ms; incremental: 174.4ms for 1 changed file; risk: 184.3ms for 26 changed files; db: 8.2MB.",
+      "notes": "Cold index: 5361ms for 1000 files/10001 symbols; search: 4.8ms; caller: 2.5ms; incremental: 124.8ms for 1 changed file; risk: 184.2ms for 26 changed files; db: 8.2MB.",
       "passed": true
     },
     {
       "name": "performance_monorepo_workspace",
-      "notes": "Cold index: 3495ms for 20 packages/800 files/4801 symbols; search: 2.1ms; caller: 1ms; incremental: 170.1ms for 1 changed file; risk: 110.8ms for 6 changed files; db: 12.5MB.",
+      "notes": "Cold index: 3716ms for 20 packages/800 files/4801 symbols; search: 2ms; caller: 1ms; incremental: 171.2ms for 1 changed file; risk: 109.9ms for 6 changed files; db: 12.5MB.",
       "passed": true
     }
   ]

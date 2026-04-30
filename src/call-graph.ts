@@ -308,6 +308,7 @@ function extractTypeScriptCheckerReferences(filePath: string, symbols: IndexedSy
     const options = readTypeScriptCompilerOptions(filePath);
     const program = ts.createProgram([filePath], {
         ...options,
+        traceResolution: false,
         allowJs: true,
         checkJs: false,
         noEmit: true,

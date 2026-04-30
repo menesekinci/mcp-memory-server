@@ -22,10 +22,10 @@ Agents often spend a lot of tokens finding the right file or function before rea
 Current benchmark task: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=5024
+classic_tokens=5194
 mcp_tokens=50
 savings=99.0%
-smaller_output=100.5x
+smaller_output=103.9x
 ```
 
 Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.
@@ -33,6 +33,14 @@ Token counts are practical estimates based on `characters / 4`; the important po
 See [docs/benchmarks.md](docs/benchmarks.md) for benchmark scope and output files.
 
 The benchmark suite also includes real task-shaped checks such as bug-fix root symbol selection, refactor impact analysis, regression narrowing, PR risk summaries, noisy bug investigation narrowing, AST caller precision, TSX component usage, incremental Git reindexing, language-depth coverage, synthetic 10k-symbol scale smoke, and synthetic monorepo workspace scale smoke.
+
+Real repository dogfooding is available with:
+
+```powershell
+npm run dogfood:real
+```
+
+It clones a small set of real open-source repositories into the system temp directory and writes reports under `dogfood/results/`.
 
 ## Quick Start
 

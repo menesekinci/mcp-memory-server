@@ -104,6 +104,6 @@ See also [Product Vision](VISION.md) and [v1.0 Criteria](V1_CRITERIA.md). The cu
 
 ## Phase 12 - Real Repository Proof
 
-- [ ] Dogfood on at least five real repositories.
-- [ ] Record token savings, files read, body reads, stale result rate, false positives, and task success.
-- [ ] Convert dogfooding findings into tests, docs, or tool contract changes.
+- [x] Dogfood on at least five real repositories.
+- [x] Record token savings, files read, body reads, stale result rate, false positives, and task success.
+- [x] Convert dogfooding findings into tests, docs, or tool contract changes.

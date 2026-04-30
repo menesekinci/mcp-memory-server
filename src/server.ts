@@ -858,13 +858,22 @@ function formatSymbol(symbol: SymbolRow, options: { includeBody: boolean; verbos
 function rankedCodeSearch(options: { projectId: string; query: string; kind?: string; limit: number }) {
   const query = options.query.trim();
   const like = `%${query}%`;
+  const projectRoot = process.env.PROJECT_PATH;
   const sql = options.kind
-    ? `SELECT * FROM symbols WHERE project_id = ? AND is_deleted = 0 AND kind = ? AND (name LIKE ? OR qualified_name LIKE ? OR file_path LIKE ? OR signature LIKE ?) LIMIT 100`
-    : `SELECT * FROM symbols WHERE project_id = ? AND is_deleted = 0 AND (name LIKE ? OR qualified_name LIKE ? OR file_path LIKE ? OR signature LIKE ?) LIMIT 100`;
+    ? `SELECT * FROM symbols WHERE project_id = ? AND is_deleted = 0 AND kind = ? AND (name LIKE ? OR qualified_name LIKE ? OR signature LIKE ?) LIMIT 200`
+    : `SELECT * FROM symbols WHERE project_id = ? AND is_deleted = 0 AND (name LIKE ? OR qualified_name LIKE ? OR signature LIKE ?) LIMIT 200`;
   const params = options.kind
-    ? [options.projectId, options.kind, like, like, like, like]
-    : [options.projectId, like, like, like, like];
-  const symbols = db.prepare(sql).all(...params) as SymbolRow[];
+    ? [options.projectId, options.kind, like, like, like]
+    : [options.projectId, like, like, like];
+  const metadataMatches = db.prepare(sql).all(...params) as SymbolRow[];
+  const pathMatches = db.prepare(options.kind
+    ? `SELECT * FROM symbols WHERE project_id = ? AND is_deleted = 0 AND kind = ? LIMIT 500`
+    : `SELECT * FROM symbols WHERE project_id = ? AND is_deleted = 0 LIMIT 500`
+  ).all(...(options.kind ? [options.projectId, options.kind] : [options.projectId])) as SymbolRow[];
+  const symbols = dedupeSymbols([
+    ...metadataMatches,
+    ...pathMatches.filter(symbol => relativePathForSearch(symbol.file_path, projectRoot).toLowerCase().includes(query.toLowerCase()))
+  ]);
   const decisionRefs = symbolIdsForDecisionMatches(options.projectId, query);
   const historyRefs = symbolIdsForHistoryMatches(options.projectId, query);
   const lowerQuery = query.toLowerCase();
@@ -875,7 +884,7 @@ function rankedCodeSearch(options: { projectId: string; query: string; kind?: st
       let score = 0;
       const name = symbol.name.toLowerCase();
       const qualified = symbol.qualified_name.toLowerCase();
-      const file = symbol.file_path.toLowerCase();
+      const file = relativePathForSearch(symbol.file_path, projectRoot).toLowerCase();
       const signature = (symbol.signature || '').toLowerCase();
 
       if (name === lowerQuery || qualified === lowerQuery) {
@@ -914,6 +923,21 @@ function rankedCodeSearch(options: { projectId: string; query: string; kind?: st
     .sort((a, b) => b.score - a.score || String((a.symbol as any).name).localeCompare(String((b.symbol as any).name)))
     .slice(0, options.limit)
     .map((result, index) => ({ rank: index + 1, ...result }));
+}
+
+function dedupeSymbols(symbols: SymbolRow[]) {
+  const seen = new Set<string>();
+  return symbols.filter(symbol => {
+    if (seen.has(symbol.id)) return false;
+    seen.add(symbol.id);
+    return true;
+  });
+}
+
+function relativePathForSearch(filePath: string, projectRoot: string | undefined) {
+  if (!projectRoot) return filePath;
+  const relative = pathRelative(projectRoot, filePath);
+  return relative.startsWith('..') ? filePath : relative;
 }
 
 function buildReadContext(symbol: SymbolRow, options: { includeBody: boolean; includeTests: boolean; maxCallers: number; maxHistory: number }) {

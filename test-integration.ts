@@ -263,6 +263,25 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
     assert(Math.ceil(budgetedSearchText.length / 4) <= 220, 'code_search should respect max_tokens by trimming optional context');
     assert(budgetedSearch.budget.max_tokens === 220, 'code_search should report the requested max_tokens budget');
 
+    const oldProjectPath = process.env.PROJECT_PATH;
+    const pathPollutionRoot = path.join(os.tmpdir(), 'Typer');
+    process.env.PROJECT_PATH = pathPollutionRoot;
+    db.prepare(`
+        INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `).run(`${projectId}:docs-js:function:_attributes`, projectId, '_attributes', '_attributes', 'method', path.join(pathPollutionRoot, 'docs', 'js', 'termynal.js'), 1, 3, 'function _attributes()', 'function _attributes() {}', 'javascript', now);
+    db.prepare(`
+        INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `).run(`${projectId}:typer-main:class:Typer`, projectId, 'Typer', 'Typer', 'class', path.join(pathPollutionRoot, 'typer', 'main.py'), 1, 3, 'class Typer', 'class Typer: pass', 'python', now);
+    const pathSafeSearch = parseToolJson<any>(await callTool('code_search', {
+        project_id: projectId,
+        query: 'Typer',
+        limit: 3
+    }));
+    process.env.PROJECT_PATH = oldProjectPath;
+    assert(pathSafeSearch.results[0].symbol.name === 'Typer', 'code_search should not rank unrelated symbols by matching the absolute project root path');
+
     const contextPacket = parseToolJson<any>(await callTool('read_context', {
         project_id: projectId,
         ref: lookup[0].ref,

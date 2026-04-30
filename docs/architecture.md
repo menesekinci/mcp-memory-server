@@ -102,5 +102,7 @@ Go caller extraction currently supports:
 - Same-package function calls.
 - `go.mod` module import resolution for package selector calls such as `price.Round()`.
 - Same-type receiver method calls such as `c.normalize()`.
+- Local constructor-assigned instance method calls such as `calc := &Calculator{}` followed by `calc.normalize()`.
+- Embedded struct promoted method calls such as `AdvancedCalculator` embedding `Calculator` and calling `a.normalize()`.
 
-Go support is intentionally at the first semantic layer. Interface dispatch, embedded methods, build tags, generated files, and workspace-level multi-module resolution should be expanded after the core Go benchmarks and dogfooding stay stable.
+Go support is intentionally still early. Interface dispatch, build tags, generated files, and workspace-level multi-module resolution should be expanded after the core Go benchmarks and dogfooding stay stable.

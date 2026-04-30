@@ -86,6 +86,7 @@ See also [Product Vision](VISION.md) and [v1.0 Criteria](V1_CRITERIA.md). The cu
 - [x] Add TSX/JSX component usage graph.
 - [x] Add TypeScript compiler API based type-aware resolution.
 - [x] Add first Go semantic layer: function/type/method indexing, module import calls, and receiver method calls.
+- [x] Add Go local constructor-assigned instance method and embedded struct promoted method caller resolution.
 
 ## Phase 9 - Freshness And Trust Contract
 

@@ -1072,6 +1072,9 @@ package cart
 import price "example.com/shop/go/pricing"
 
 type Calculator struct{}
+type AdvancedCalculator struct {
+    Calculator
+}
 
 func CalculateTotal(value int) int {
     return price.Round(value)
@@ -1087,6 +1090,15 @@ func (c *Calculator) normalize(value int) int {
 
 func (c *Calculator) Total(value int) int {
     return c.normalize(value)
+}
+
+func BuildWithLocal(value int) int {
+    calculator := &Calculator{}
+    return calculator.normalize(value)
+}
+
+func (a *AdvancedCalculator) Total(value int) int {
+    return a.normalize(value)
 }
 `);
     writeFile(pyFile, `
@@ -1312,6 +1324,8 @@ def mention_only_py():
             min_confidence: 0.0
         }));
         assert(goMethodCallers.definite_callers.some(c => c.qualified_name === 'Calculator.Total' && c.resolution_method === 'ast_go_receiver_method'), 'Go receiver method calls should resolve same-type method callers');
+        assert(goMethodCallers.definite_callers.some(c => c.qualified_name === 'BuildWithLocal' && c.resolution_method === 'ast_go_instance_method'), 'Go local constructor-assigned variables should resolve instance method callers');
+        assert(goMethodCallers.definite_callers.some(c => c.qualified_name === 'AdvancedCalculator.Total' && c.resolution_method === 'ast_go_embedded_method'), 'Go embedded struct promoted methods should resolve to embedded method owners');
     } finally {
         await watcher.close();
     }

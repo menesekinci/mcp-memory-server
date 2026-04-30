@@ -387,6 +387,9 @@ package cart
 import price "example.com/shop/go/pricing"
 
 type Calculator struct{}
+type AdvancedCalculator struct {
+    Calculator
+}
 
 func CalculateTotal(value int) int {
     return price.Round(value)
@@ -402,6 +405,15 @@ func (c *Calculator) normalize(value int) int {
 
 func (c *Calculator) Total(value int) int {
     return c.normalize(value)
+}
+
+func BuildWithLocal(value int) int {
+    calculator := &Calculator{}
+    return calculator.normalize(value)
+}
+
+func (a *AdvancedCalculator) Total(value int) int {
+    return a.normalize(value)
 }
 `);
     writeFile(pyFile, `
@@ -553,7 +565,7 @@ class UsesWorker:
 
         return {
             name: 'language_depth_js_python_callers',
-            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python async: ${pyAsyncCallers.join(', ') || 'none'}; Python from/re-export: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}; Python instance-method: ${pyInstanceCallers.join(', ') || 'none'}; Python inherited-self: ${pyInheritedCallers.join(', ') || 'none'}; Python imported-base: ${pyRemoteCallers.join(', ') || 'none'}; Python super: ${pySuperCallers.join(', ') || 'none'}; Python self-attribute instance: ${pyWorkerCallers.join(', ') || 'none'}; Go same-package: ${goCallers.join(', ') || 'none'}; Go import: ${goExternalCallers.join(', ') || 'none'}; Go receiver-method: ${goMethodCallers.join(', ') || 'none'}.`,
+            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python async: ${pyAsyncCallers.join(', ') || 'none'}; Python from/re-export: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}; Python instance-method: ${pyInstanceCallers.join(', ') || 'none'}; Python inherited-self: ${pyInheritedCallers.join(', ') || 'none'}; Python imported-base: ${pyRemoteCallers.join(', ') || 'none'}; Python super: ${pySuperCallers.join(', ') || 'none'}; Python self-attribute instance: ${pyWorkerCallers.join(', ') || 'none'}; Go same-package: ${goCallers.join(', ') || 'none'}; Go import: ${goExternalCallers.join(', ') || 'none'}; Go receiver/local/embedded methods: ${goMethodCallers.join(', ') || 'none'}.`,
             passed: jsCallers.includes('checkout')
                 && pyCallers.includes('checkout_py')
                 && pyAsyncCallers.includes('checkout_async_py')
@@ -569,6 +581,8 @@ class UsesWorker:
                 && goCallers.includes('CheckoutGo')
                 && goExternalCallers.includes('CalculateTotal')
                 && goMethodCallers.includes('Calculator.Total')
+                && goMethodCallers.includes('BuildWithLocal')
+                && goMethodCallers.includes('AdvancedCalculator.Total')
         };
     } finally {
         await watcher.close();

@@ -171,11 +171,17 @@ type PythonClassBaseMap = Map<string, Array<{ className: string; filePath: strin
 type PythonClassMethodMap = Map<string, Set<string>>;
 type GoImportMap = Map<string, { importPath: string; packageDir?: string }>;
 type GoReceiverMap = Map<string, { receiverName: string; typeName: string }>;
+type GoObjectTypeMap = Map<string, { typeName: string; filePath: string }>;
+type GoEmbeddedTypeMap = Map<string, string[]>;
+type GoMethodMap = Map<string, Set<string>>;
 
 function extractGoCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[], filePath: string): CallReference[] {
     const calls: CallReference[] = [];
     const imports = extractGoImports(tree.rootNode, filePath);
     const receivers = extractGoReceivers(tree.rootNode, symbols);
+    const objectTypes = extractGoObjectTypes(tree.rootNode, filePath);
+    const embeddedTypes = extractGoEmbeddedTypes(tree.rootNode);
+    const methods = collectGoMethods(symbols);
 
     function traverse(node: Parser.SyntaxNode) {
         if (node.type === 'call_expression') {
@@ -183,18 +189,21 @@ function extractGoCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[], fi
             const caller = findContainingSymbol(symbols, node.startPosition.row + 1);
             if (callee && caller && (callee.memberName || callee.localName) !== caller.name) {
                 const imported = callee.memberName ? resolveGoImportedTarget(callee, imports) : null;
-                const receiverMethod = !imported && callee.memberName
-                    ? resolveGoReceiverMethod(callee, caller, receivers, filePath)
+                const instanceMethod = !imported && callee.memberName
+                    ? resolveGoInstanceMethod(callee, caller, objectTypes, methods, embeddedTypes, filePath)
+                    : null;
+                const receiverMethod = !imported && !instanceMethod && callee.memberName
+                    ? resolveGoReceiverMethod(callee, caller, receivers, methods, embeddedTypes, filePath)
                     : null;
                 calls.push({
                     caller_symbol_id: caller.id,
-                    target_name: imported?.name || receiverMethod?.name || callee.memberName || callee.localName,
-                    target_qualified_name: receiverMethod?.qualifiedName,
-                    target_file_path: imported?.filePath || receiverMethod?.filePath,
+                    target_name: imported?.name || instanceMethod?.name || receiverMethod?.name || callee.memberName || callee.localName,
+                    target_qualified_name: instanceMethod?.qualifiedName || receiverMethod?.qualifiedName,
+                    target_file_path: imported?.filePath || instanceMethod?.filePath || receiverMethod?.filePath,
                     file_path: filePath,
                     line: node.startPosition.row + 1,
-                    confidence: imported ? 0.94 : receiverMethod ? 0.93 : 0.9,
-                    resolution_method: imported?.method || receiverMethod?.method || 'ast_go_name'
+                    confidence: imported ? 0.94 : instanceMethod ? 0.93 : receiverMethod ? 0.93 : 0.9,
+                    resolution_method: imported?.method || instanceMethod?.method || receiverMethod?.method || 'ast_go_name'
                 });
             }
         }
@@ -271,6 +280,80 @@ function extractGoReceivers(root: Parser.SyntaxNode, symbols: IndexedSymbol[]): 
     return receivers;
 }
 
+function extractGoObjectTypes(root: Parser.SyntaxNode, filePath: string): GoObjectTypeMap {
+    const objectTypes: GoObjectTypeMap = new Map();
+
+    function traverse(node: Parser.SyntaxNode, functionScope?: string) {
+        if (node.type === 'function_declaration' || node.type === 'method_declaration') {
+            const nameNode = node.childForFieldName('name');
+            const qualifiedFunction = nameNode ? goFunctionScopeName(node, nameNode.text) : functionScope;
+            for (let i = 0; i < node.namedChildCount; i++) {
+                traverse(node.namedChild(i), qualifiedFunction);
+            }
+            return;
+        }
+
+        if (node.type === 'short_var_declaration' || node.type === 'var_spec') {
+            const left = node.childForFieldName('left') || node.childForFieldName('name') || node.namedChild(0);
+            const right = node.childForFieldName('right') || node.childForFieldName('value') || node.namedChild(1);
+            const variableName = left ? findFirstGoIdentifier(left)?.text : null;
+            const typeName = right ? goConstructedTypeName(right) : null;
+            if (variableName && typeName) {
+                objectTypes.set(goObjectTypeKey(variableName, functionScope), { typeName, filePath });
+            }
+        }
+
+        for (let i = 0; i < node.namedChildCount; i++) {
+            traverse(node.namedChild(i), functionScope);
+        }
+    }
+
+    traverse(root);
+    return objectTypes;
+}
+
+function extractGoEmbeddedTypes(root: Parser.SyntaxNode): GoEmbeddedTypeMap {
+    const embeddedTypes: GoEmbeddedTypeMap = new Map();
+
+    function traverse(node: Parser.SyntaxNode) {
+        if (node.type === 'type_spec') {
+            const nameNode = node.childForFieldName('name');
+            const typeNode = node.childForFieldName('type');
+            if (nameNode && typeNode?.type === 'struct_type') {
+                const embedded: string[] = [];
+                for (let i = 0; i < typeNode.namedChildCount; i++) {
+                    const child = typeNode.namedChild(i);
+                    if (child.type !== 'field_declaration') continue;
+                    const fieldName = findFirstGoIdentifier(child);
+                    const typeName = findFirstGoTypeIdentifier(child)?.text;
+                    if (!fieldName && typeName) embedded.push(typeName);
+                }
+                if (embedded.length > 0) embeddedTypes.set(nameNode.text, embedded);
+            }
+        }
+
+        for (let i = 0; i < node.namedChildCount; i++) {
+            traverse(node.namedChild(i));
+        }
+    }
+
+    traverse(root);
+    return embeddedTypes;
+}
+
+function collectGoMethods(symbols: IndexedSymbol[]): GoMethodMap {
+    const methods: GoMethodMap = new Map();
+    for (const symbol of symbols) {
+        if (!symbol.qualified_name?.includes('.')) continue;
+        const parts = symbol.qualified_name.split('.');
+        const methodName = parts.pop()!;
+        const typeName = parts.join('.');
+        if (!methods.has(typeName)) methods.set(typeName, new Set());
+        methods.get(typeName)!.add(methodName);
+    }
+    return methods;
+}
+
 function resolveGoImportedTarget(callee: Callee, imports: GoImportMap) {
     if (!callee.memberName) return null;
     const binding = imports.get(callee.localName);
@@ -282,16 +365,98 @@ function resolveGoImportedTarget(callee: Callee, imports: GoImportMap) {
     };
 }
 
-function resolveGoReceiverMethod(callee: Callee, caller: IndexedSymbol, receivers: GoReceiverMap, filePath: string) {
+function resolveGoInstanceMethod(
+    callee: Callee,
+    caller: IndexedSymbol,
+    objectTypes: GoObjectTypeMap,
+    methods: GoMethodMap,
+    embeddedTypes: GoEmbeddedTypeMap,
+    filePath: string
+) {
+    if (!callee.memberName) return null;
+    const objectType = objectTypes.get(goObjectTypeKey(callee.localName, caller.qualified_name)) || objectTypes.get(callee.localName);
+    if (!objectType) return null;
+    const targetType = resolveGoMethodOwner(objectType.typeName, callee.memberName, methods, embeddedTypes, objectType.filePath || filePath);
+    return {
+        name: callee.memberName,
+        qualifiedName: `${targetType.typeName}.${callee.memberName}`,
+        filePath: objectType.filePath || filePath,
+        method: targetType.promoted ? 'ast_go_embedded_method' : 'ast_go_instance_method'
+    };
+}
+
+function resolveGoReceiverMethod(
+    callee: Callee,
+    caller: IndexedSymbol,
+    receivers: GoReceiverMap,
+    methods: GoMethodMap,
+    embeddedTypes: GoEmbeddedTypeMap,
+    filePath: string
+) {
     if (!callee.memberName || !caller.qualified_name) return null;
     const receiver = receivers.get(caller.qualified_name);
     if (!receiver || receiver.receiverName !== callee.localName) return null;
+    const targetType = resolveGoMethodOwner(receiver.typeName, callee.memberName, methods, embeddedTypes, filePath);
     return {
         name: callee.memberName,
-        qualifiedName: `${receiver.typeName}.${callee.memberName}`,
+        qualifiedName: `${targetType.typeName}.${callee.memberName}`,
         filePath,
-        method: 'ast_go_receiver_method'
+        method: targetType.promoted ? 'ast_go_embedded_method' : 'ast_go_receiver_method'
     };
+}
+
+function resolveGoMethodOwner(typeName: string, methodName: string, methods: GoMethodMap, embeddedTypes: GoEmbeddedTypeMap, filePath?: string, seen = new Set<string>()): { typeName: string; promoted: boolean } {
+    if (methods.get(typeName)?.has(methodName)) return { typeName, promoted: false };
+    if (seen.has(typeName)) return { typeName, promoted: false };
+    seen.add(typeName);
+    const embeddedCandidates = embeddedTypes.get(typeName) || goEmbeddedTypesFromSource(filePath, typeName);
+    for (const embeddedType of embeddedCandidates) {
+        if (methods.get(embeddedType)?.has(methodName)) return { typeName: embeddedType, promoted: true };
+        const resolved = resolveGoMethodOwner(embeddedType, methodName, methods, embeddedTypes, filePath, seen);
+        if (resolved.typeName !== embeddedType || resolved.promoted) return { ...resolved, promoted: true };
+    }
+    return { typeName, promoted: false };
+}
+
+function goEmbeddedTypesFromSource(filePath: string | undefined, typeName: string) {
+    if (!filePath || !fs.existsSync(filePath)) return [];
+    const content = fs.readFileSync(filePath, 'utf8');
+    const match = content.match(new RegExp(`type\\s+${escapeRegex(typeName)}\\s+struct\\s*\\{([\\s\\S]*?)\\}`));
+    if (!match) return [];
+    return match[1]
+        .split(/\r?\n|;/)
+        .map(line => line.trim())
+        .filter(line => /^[*]?[A-Z]\w*(?:\s*(?:\/\/.*)?)?$/.test(line))
+        .map(line => line.replace(/^\*/, '').replace(/\/\/.*$/, '').trim());
+}
+
+function goObjectTypeKey(variableName: string, functionScope?: string) {
+    return functionScope ? `${functionScope}:${variableName}` : variableName;
+}
+
+function goFunctionScopeName(node: Parser.SyntaxNode, functionName: string) {
+    if (node.type !== 'method_declaration') return functionName;
+    const receiverType = node.childForFieldName('receiver')
+        ? findFirstGoTypeIdentifier(node.childForFieldName('receiver'))?.text
+        : null;
+    return receiverType ? `${receiverType}.${functionName}` : functionName;
+}
+
+function goConstructedTypeName(node: Parser.SyntaxNode): string | null {
+    if (node.type === 'composite_literal') return findFirstGoTypeIdentifier(node)?.text || null;
+    if (node.type === 'unary_expression') {
+        for (let i = 0; i < node.namedChildCount; i++) {
+            const typeName = goConstructedTypeName(node.namedChild(i));
+            if (typeName) return typeName;
+        }
+    }
+    if (node.type === 'expression_list') {
+        for (let i = 0; i < node.namedChildCount; i++) {
+            const typeName = goConstructedTypeName(node.namedChild(i));
+            if (typeName) return typeName;
+        }
+    }
+    return null;
 }
 
 function resolveGoPackageDir(fromFilePath: string, importPath: string) {

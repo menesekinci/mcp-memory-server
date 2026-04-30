@@ -68,7 +68,7 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
     db.prepare(`
         INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-    `).run(symbolId, projectId, 'calculateTotal', 'calculateTotal', 'function', 'memory.ts', 1, 3, 'function calculateTotal()', 'function calculateTotal() { return 1; }', 'typescript', now);
+    `).run(symbolId, projectId, 'calculateTotal', 'calculateTotal', 'function', 'memory.ts', 1, 3, 'function calculateTotal()', 'function calculateTotal() { return 1; }\n' + 'x'.repeat(1200), 'typescript', now);
 
     db.prepare(`
         INSERT INTO symbols (id, project_id, name, qualified_name, kind, file_path, start_line, end_line, signature, body, language, updated_at, is_deleted)
@@ -242,7 +242,7 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
     }));
     assert(activeDecisions.length === 1, 'get_decisions should find the active decision linked to a symbol');
 
-    const rankedSearch = parseToolJson<{ results: any[]; related_decisions: any[]; history_matches: any[] }>(await callTool('code_search', {
+    const rankedSearch = parseToolJson<any>(await callTool('code_search', {
         project_id: projectId,
         query: 'calculateTotal',
         limit: 3
@@ -251,6 +251,17 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
     assert(rankedSearch.results[0].why_this_matched.includes('exact_symbol_match'), 'code_search should explain why a result matched');
     assert(!JSON.stringify(rankedSearch).includes('return 1'), 'code_search should not leak symbol bodies');
     assert(rankedSearch.related_decisions.some(decision => decision.summary.includes('billing total boundary')), 'code_search should include matching decisions');
+    assert(rankedSearch.budget?.estimated_tokens <= rankedSearch.budget?.max_tokens, 'code_search should report an output token budget');
+
+    const budgetedSearchText = (await callTool('code_search', {
+        project_id: projectId,
+        query: 'calculateTotal',
+        limit: 10,
+        max_tokens: 220
+    })).content[0].text;
+    const budgetedSearch = JSON.parse(budgetedSearchText);
+    assert(Math.ceil(budgetedSearchText.length / 4) <= 220, 'code_search should respect max_tokens by trimming optional context');
+    assert(budgetedSearch.budget.max_tokens === 220, 'code_search should report the requested max_tokens budget');
 
     const contextPacket = parseToolJson<any>(await callTool('read_context', {
         project_id: projectId,
@@ -269,6 +280,16 @@ async function testMcpTools(db: TestDb, callTool: (name: string, args?: Record<s
         include_tests: false
     }));
     assert(contextWithBody.target.body.includes('return 1'), 'read_context include_body=true should include the symbol body');
+
+    const budgetedContextText = (await callTool('read_context', {
+        project_id: projectId,
+        ref: lookup[0].ref,
+        include_body: true,
+        max_tokens: 220
+    })).content[0].text;
+    const budgetedContext = JSON.parse(budgetedContextText);
+    assert(Math.ceil(budgetedContextText.length / 4) <= 220, 'read_context should respect max_tokens by trimming packet details');
+    assert(budgetedContext.budget.truncated === true, 'read_context should disclose budget truncation');
 
     const impact = parseToolJson<any>(await callTool('impact_analysis', {
         project_id: projectId,

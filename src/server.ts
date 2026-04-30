@@ -39,6 +39,7 @@ export async function listTools() {
             project_path: { type: "string" },
             kind: { type: "string" },
             limit: { type: "number", default: 10 },
+            max_tokens: { type: "number", default: 1200 },
             include_history: { type: "boolean", default: true },
             include_decisions: { type: "boolean", default: true }
           },
@@ -57,7 +58,8 @@ export async function listTools() {
             include_body: { type: "boolean", default: false },
             include_tests: { type: "boolean", default: false },
             max_callers: { type: "number", default: 8 },
-            max_history: { type: "number", default: 5 }
+            max_history: { type: "number", default: 5 },
+            max_tokens: { type: "number", default: 1600 }
           },
         },
       },
@@ -72,7 +74,8 @@ export async function listTools() {
             project_id: { type: "string", default: "default" },
             project_path: { type: "string" },
             include_tests: { type: "boolean", default: false },
-            max_callers: { type: "number", default: 12 }
+            max_callers: { type: "number", default: 12 },
+            max_tokens: { type: "number", default: 1400 }
           },
         },
       },
@@ -326,14 +329,14 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
     const projectPath = args.project_path || process.env.PROJECT_PATH;
     const health = getProjectIndexHealth(projectPath, projectName);
     return {
-      content: [{ type: "text", text: JSON.stringify({
+      content: [{ type: "text", text: budgetedJson({
         query: args.query || '',
         project_id: projectName,
         freshness: health.freshness,
         results,
         related_decisions: decisions,
         history_matches: history
-      }) }],
+      }, args.max_tokens || 1200) }],
     };
   }
 
@@ -344,12 +347,12 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
       return { content: [{ type: "text", text: "Symbol not found." }] };
     }
     return {
-      content: [{ type: "text", text: JSON.stringify(buildReadContext(symbol, {
+      content: [{ type: "text", text: budgetedJson(buildReadContext(symbol, {
         includeBody: Boolean(args.include_body),
         includeTests: Boolean(args.include_tests),
         maxCallers: args.max_callers || 8,
         maxHistory: args.max_history || 5
-      })) }],
+      }), args.max_tokens || 1600) }],
     };
   }
 
@@ -358,10 +361,10 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
     const symbol = resolveActiveSymbol(args.symbol_id, args.ref, projectName);
     if (symbol) {
       return {
-        content: [{ type: "text", text: JSON.stringify(buildSymbolImpact(symbol, {
+        content: [{ type: "text", text: budgetedJson(buildSymbolImpact(symbol, {
           includeTests: Boolean(args.include_tests),
           maxCallers: args.max_callers || 12
-        })) }],
+        }), args.max_tokens || 1400) }],
       };
     }
 
@@ -376,7 +379,7 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
     const decisions = decisionsForSymbolIds(projectName, changedSymbolIds);
     const health = getProjectIndexHealth(projectPath, projectName);
     return {
-      content: [{ type: "text", text: JSON.stringify({
+      content: [{ type: "text", text: budgetedJson({
         mode: "changed_files",
         project_id: projectName,
         freshness: health.freshness,
@@ -385,7 +388,7 @@ export async function callTool(name: string, rawArgs: Record<string, any> = {}) 
         related_decisions: decisions,
         risk_level: riskLevel(changedSymbols.length, decisions.length, health.freshness),
         why: impactWhy(changedSymbols.length, decisions.length, health.freshness)
-      }) }],
+      }, args.max_tokens || 1400) }],
     };
   }
 
@@ -1105,6 +1108,80 @@ function contextNotes(symbol: SymbolRow, definiteCallerCount: number, decisionCo
 
 function isTestFile(filePath: string) {
   return /[._-](test|spec)\.[^.]+$/.test(filePath);
+}
+
+function budgetedJson(payload: any, maxTokens?: number) {
+  const budget = normalizeTokenBudget(maxTokens);
+  if (!budget) return JSON.stringify(payload);
+
+  const maxChars = budget * 4;
+  const result = JSON.parse(JSON.stringify(payload));
+  result.budget = {
+    max_tokens: budget,
+    estimated_tokens: estimateTokens(result),
+    truncated: false
+  };
+
+  if (JSON.stringify(result).length <= maxChars) {
+    result.budget.estimated_tokens = estimateTokens(result);
+    return JSON.stringify(result);
+  }
+
+  result.budget.truncated = true;
+  result.budget.omitted = [];
+
+  const shrinkers = [
+    () => popArray(result.history_matches, 0, result.budget.omitted, 'history_matches'),
+    () => popArray(result.history, 0, result.budget.omitted, 'history'),
+    () => popArray(result.callers?.probable, 0, result.budget.omitted, 'probable_callers'),
+    () => popArray(result.callers?.definite, 0, result.budget.omitted, 'definite_callers'),
+    () => popArray(result.decisions, 0, result.budget.omitted, 'decisions'),
+    () => popArray(result.related_decisions, 0, result.budget.omitted, 'related_decisions'),
+    () => popArray(result.changed_symbols, 0, result.budget.omitted, 'changed_symbols'),
+    () => popArray(result.results, 1, result.budget.omitted, 'results'),
+    () => truncateBody(result)
+  ];
+
+  let changed = true;
+  while (JSON.stringify(result).length > maxChars && changed) {
+    changed = false;
+    for (const shrink of shrinkers) {
+      if (JSON.stringify(result).length <= maxChars) break;
+      changed = shrink() || changed;
+    }
+  }
+
+  result.budget.estimated_tokens = estimateTokens(result);
+  return JSON.stringify(result);
+}
+
+function normalizeTokenBudget(maxTokens?: number) {
+  if (typeof maxTokens !== 'number' || !Number.isFinite(maxTokens) || maxTokens <= 0) return undefined;
+  return Math.max(120, Math.floor(maxTokens));
+}
+
+function estimateTokens(value: any) {
+  return Math.ceil(JSON.stringify(value).length / 4);
+}
+
+function popArray(value: any, minLength = 0, omitted?: string[], label?: string) {
+  if (!Array.isArray(value) || value.length <= minLength) return false;
+  value.pop();
+  if (omitted && label && !omitted.includes(label)) omitted.push(label);
+  return true;
+}
+
+function truncateBody(result: any) {
+  const target = result.target;
+  if (!target || typeof target.body !== 'string') return false;
+  if (target.body.length <= 240) {
+    delete target.body;
+    target.body_omitted_by_budget = true;
+    return true;
+  }
+  target.body = `${target.body.slice(0, Math.max(120, Math.floor(target.body.length / 2)))}\n/* body truncated by max_tokens */`;
+  target.body_truncated_by_budget = true;
+  return true;
 }
 
 function resolveSymbolIdFromRef(ref: string | undefined, projectId: string) {

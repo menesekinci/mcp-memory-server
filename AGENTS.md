@@ -135,6 +135,7 @@ When an item is completed, move its concrete result into Completed Validation No
 - Product vision and v1.0 criteria were formalized around freshness, compact ranked context, small agent-facing tools, memory quality, real-repository validation, privacy controls, and setup/doctor polish.
 - P0 freshness contract now exposes project-level index health, per-symbol freshness metadata, stale/missing/unindexed/excluded counts, and stale-before/reconcile-after test coverage so agents can detect stale working-tree changes before trusting compact discovery results.
 - Phase 10 now has a first high-level agent context layer: `code_search` ranks compact matches with `why_this_matched`, `read_context` returns one focused symbol packet, and `impact_analysis` summarizes callers, freshness, and linked-decision risk without forcing agents through several low-level calls.
+- Phase 10 token budgets are now first-class on high-level context tools through `max_tokens`; outputs include budget metadata and trim optional context before exceeding the requested budget.
 
 ## Verification
 

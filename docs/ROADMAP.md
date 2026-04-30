@@ -94,7 +94,7 @@ See also [Product Vision](VISION.md) and [v1.0 Criteria](V1_CRITERIA.md). The cu
 - [x] Add ranked `code_search` with `why_this_matched`.
 - [x] Add `read_context` packets for body, callers, tests, decisions, history, and freshness.
 - [x] Add `impact_analysis` for target-symbol and changed-file flows.
-- [ ] Keep compact token budgets as first-class inputs.
+- [x] Keep compact token budgets as first-class inputs.
 
 ## Phase 11 - Memory Quality
 

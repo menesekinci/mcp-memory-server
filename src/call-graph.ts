@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import Parser from 'tree-sitter';
 import ts from 'typescript';
+import { isExcludedByGoBuildConstraints } from './go-build';
 
 export type CallReference = {
     caller_symbol_id: string;
@@ -672,7 +673,7 @@ function findGoPackageSymbolFile(packageDir: string, symbolName: string) {
         if (!entry.endsWith('.go') || entry.endsWith('_test.go')) continue;
         const filePath = path.join(packageDir, entry);
         const content = fs.readFileSync(filePath, 'utf8');
-        if (isGeneratedGoSource(content) || isExcludedGoBuildSource(content)) continue;
+        if (isGeneratedGoSource(content) || isExcludedByGoBuildConstraints(filePath, content)) continue;
         const pattern = new RegExp(`\\bfunc\\s+(?:\\([^)]*\\)\\s*)?${escapeRegex(symbolName)}\\s*\\(`);
         if (pattern.test(content)) return filePath;
     }
@@ -681,11 +682,6 @@ function findGoPackageSymbolFile(packageDir: string, symbolName: string) {
 
 function isGeneratedGoSource(content: string) {
     return /Code generated .* DO NOT EDIT\./i.test(content.slice(0, 2048));
-}
-
-function isExcludedGoBuildSource(content: string) {
-    const header = content.slice(0, 2048);
-    return /\/\/go:build\s+ignore\b/.test(header) || /\/\/\s*\+build\s+ignore\b/.test(header);
 }
 
 function findFirstGoIdentifier(node: Parser.SyntaxNode): Parser.SyntaxNode | null {

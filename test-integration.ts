@@ -1014,6 +1014,7 @@ async function testLanguageDepth(db: TestDb, startIndexer: (projectPath: string,
     const goReplaceFile = path.join(projectPath, 'replaced', 'discount', 'discount.go');
     const goGeneratedFile = path.join(projectPath, 'go', 'cart', 'cart.pb.go');
     const goBuildTaggedFile = path.join(projectPath, 'go', 'cart', 'ignored.go');
+    const goImpossibleBuildFile = path.join(projectPath, 'go', 'cart', 'impossible.go');
     const goVendorFile = path.join(projectPath, 'vendor', 'example.com', 'vendorpkg', 'vendorpkg.go');
     const goWorkFile = path.join(projectPath, 'go.work');
     const goWorkspaceAppModFile = path.join(projectPath, 'workspace', 'app', 'go.mod');
@@ -1161,6 +1162,15 @@ func IgnoredBuildTagNoise() int {
     return 1
 }
 `);
+    writeFile(goImpossibleBuildFile, `
+//go:build linux && windows
+
+package cart
+
+func ImpossibleBuildTagNoise() int {
+    return 1
+}
+`);
     writeFile(goVendorFile, `
 package vendorpkg
 
@@ -1298,7 +1308,9 @@ def mention_only_py():
               .get(projectId, goGeneratedFile) as { is_excluded: number } | undefined;
             const goBuildTaggedExcluded = db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
               .get(projectId, goBuildTaggedFile) as { is_excluded: number } | undefined;
-            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goReplaceTarget && goVendorTarget && goMethodTarget && goInterfaceTarget && goWorkspaceTarget && goGeneratedExcluded?.is_excluded === 1 && goBuildTaggedExcluded?.is_excluded === 1);
+            const goImpossibleBuildExcluded = db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
+              .get(projectId, goImpossibleBuildFile) as { is_excluded: number } | undefined;
+            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goReplaceTarget && goVendorTarget && goMethodTarget && goInterfaceTarget && goWorkspaceTarget && goGeneratedExcluded?.is_excluded === 1 && goBuildTaggedExcluded?.is_excluded === 1 && goImpossibleBuildExcluded?.is_excluded === 1);
         });
 
         const jsTarget = db.prepare("SELECT id, language FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -1455,6 +1467,10 @@ def mention_only_py():
         const buildTaggedSymbol = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'IgnoredBuildTagNoise', goBuildTaggedFile);
         assert(!buildTaggedSymbol, 'Go files tagged with ignore build constraints should be excluded from symbol indexing');
+
+        const impossibleBuildTaggedSymbol = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'ImpossibleBuildTagNoise', goImpossibleBuildFile);
+        assert(!impossibleBuildTaggedSymbol, 'Go files with false build expressions should be excluded from symbol indexing');
 
         const goWorkspaceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'WorkspaceRound', goWorkspaceLibFile) as { id: string } | undefined;

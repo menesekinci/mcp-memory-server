@@ -12,6 +12,7 @@ import db from './db';
 import { extractCallReferences } from './call-graph';
 import { symbolRef } from './refs';
 import { bodyStorageEnabled } from './privacy';
+import { isExcludedByGoBuildConstraints } from './go-build';
 
 const LANGUAGES = {
     '.ts': { language: (TypeScript as any).typescript, name: 'typescript' },
@@ -128,7 +129,7 @@ export async function indexFile(filePath: string, projectId = 'default', options
         }
 
         const now = Date.now();
-        if (isSecretFile(filePath) || containsSecrets(content) || isGeneratedGoFile(filePath, content) || isExcludedGoBuildFile(filePath, content)) {
+        if (isSecretFile(filePath) || containsSecrets(content) || isGeneratedGoFile(filePath, content) || isExcludedByGoBuildConstraints(filePath, content)) {
             db.prepare(`
                 INSERT INTO files (id, project_id, path, language, last_indexed_at, git_blob_sha, is_excluded)
                 VALUES (?, ?, ?, ?, ?, ?, 1)
@@ -424,12 +425,6 @@ function containsSecrets(content: string) {
 
 function isGeneratedGoFile(filePath: string, content: string) {
     return filePath.endsWith('.go') && /Code generated .* DO NOT EDIT\./i.test(content.slice(0, 2048));
-}
-
-function isExcludedGoBuildFile(filePath: string, content: string) {
-    if (!filePath.endsWith('.go')) return false;
-    const header = content.slice(0, 2048);
-    return /\/\/go:build\s+ignore\b/.test(header) || /\/\/\s*\+build\s+ignore\b/.test(header);
 }
 
 function isSupportedSourceFile(filePath: string) {

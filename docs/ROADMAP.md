@@ -90,6 +90,7 @@ See also [Product Vision](VISION.md) and [v1.0 Criteria](V1_CRITERIA.md). The cu
 - [x] Add Go `go.work` workspace import resolution and generated Go file exclusion.
 - [x] Add Go local `replace` import resolution and simple interface parameter dispatch.
 - [x] Add Go vendor import resolution and explicit `ignore` build-constraint exclusion.
+- [x] Add Go build constraint evaluation for `//go:build`, legacy `// +build`, GOOS/GOARCH suffixes, and optional custom tags.
 
 ## Phase 9 - Freshness And Trust Contract
 

@@ -1015,6 +1015,8 @@ async function testLanguageDepth(db: TestDb, startIndexer: (projectPath: string,
     const goGeneratedFile = path.join(projectPath, 'go', 'cart', 'cart.pb.go');
     const goBuildTaggedFile = path.join(projectPath, 'go', 'cart', 'ignored.go');
     const goImpossibleBuildFile = path.join(projectPath, 'go', 'cart', 'impossible.go');
+    const goSuffixBuildFile = path.join(projectPath, 'go', 'cart', 'suffix_plan9.go');
+    const goCustomBuildFile = path.join(projectPath, 'go', 'cart', 'custom.go');
     const goVendorFile = path.join(projectPath, 'vendor', 'example.com', 'vendorpkg', 'vendorpkg.go');
     const goWorkFile = path.join(projectPath, 'go.work');
     const goWorkspaceAppModFile = path.join(projectPath, 'workspace', 'app', 'go.mod');
@@ -1171,6 +1173,22 @@ func ImpossibleBuildTagNoise() int {
     return 1
 }
 `);
+    writeFile(goSuffixBuildFile, `
+package cart
+
+func Plan9SuffixNoise() int {
+    return 1
+}
+`);
+    writeFile(goCustomBuildFile, `
+//go:build mcpmemory
+
+package cart
+
+func CustomTaggedGo() int {
+    return 7
+}
+`);
     writeFile(goVendorFile, `
 package vendorpkg
 
@@ -1267,6 +1285,8 @@ def mention_only_py():
     return "calculate_total"
 `);
 
+    const previousGoBuildTags = process.env.MCP_MEMORY_GO_BUILD_TAGS;
+    process.env.MCP_MEMORY_GO_BUILD_TAGS = [previousGoBuildTags, 'mcpmemory'].filter(Boolean).join(',');
     const watcher = startIndexer(projectPath, projectId);
     try {
         await waitFor(() => {
@@ -1310,7 +1330,11 @@ def mention_only_py():
               .get(projectId, goBuildTaggedFile) as { is_excluded: number } | undefined;
             const goImpossibleBuildExcluded = db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
               .get(projectId, goImpossibleBuildFile) as { is_excluded: number } | undefined;
-            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goReplaceTarget && goVendorTarget && goMethodTarget && goInterfaceTarget && goWorkspaceTarget && goGeneratedExcluded?.is_excluded === 1 && goBuildTaggedExcluded?.is_excluded === 1 && goImpossibleBuildExcluded?.is_excluded === 1);
+            const goSuffixBuildExcluded = db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
+              .get(projectId, goSuffixBuildFile) as { is_excluded: number } | undefined;
+            const goCustomTaggedTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'CustomTaggedGo', goCustomBuildFile);
+            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goReplaceTarget && goVendorTarget && goMethodTarget && goInterfaceTarget && goWorkspaceTarget && goGeneratedExcluded?.is_excluded === 1 && goBuildTaggedExcluded?.is_excluded === 1 && goImpossibleBuildExcluded?.is_excluded === 1 && goSuffixBuildExcluded?.is_excluded === 1 && goCustomTaggedTarget);
         });
 
         const jsTarget = db.prepare("SELECT id, language FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -1472,6 +1496,14 @@ def mention_only_py():
           .get(projectId, 'ImpossibleBuildTagNoise', goImpossibleBuildFile);
         assert(!impossibleBuildTaggedSymbol, 'Go files with false build expressions should be excluded from symbol indexing');
 
+        const suffixBuildTaggedSymbol = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'Plan9SuffixNoise', goSuffixBuildFile);
+        assert(!suffixBuildTaggedSymbol, 'Go files with inactive GOOS suffixes should be excluded from symbol indexing');
+
+        const customBuildTaggedSymbol = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'CustomTaggedGo', goCustomBuildFile);
+        assert(customBuildTaggedSymbol, 'Go files with configured custom build tags should be indexed');
+
         const goWorkspaceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'WorkspaceRound', goWorkspaceLibFile) as { id: string } | undefined;
         const goWorkspaceCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
@@ -1481,6 +1513,8 @@ def mention_only_py():
         assert(goWorkspaceCallers.definite_callers.some(c => c.qualified_name === 'CheckoutWorkspace' && c.resolution_method === 'ast_go_import'), 'Go go.work module imports should resolve cross-module callers');
     } finally {
         await watcher.close();
+        if (previousGoBuildTags === undefined) delete process.env.MCP_MEMORY_GO_BUILD_TAGS;
+        else process.env.MCP_MEMORY_GO_BUILD_TAGS = previousGoBuildTags;
     }
 }
 

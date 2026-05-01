@@ -35,7 +35,7 @@ function commandExists(command) {
 }
 
 function supportedSourceCount(projectPath) {
-  const exts = new Set(['.ts', '.tsx', '.js', '.jsx', '.py']);
+  const exts = new Set(['.ts', '.tsx', '.js', '.jsx', '.py', '.go']);
   const ignored = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage']);
   let count = 0;
   const stack = [projectPath];
@@ -100,6 +100,14 @@ function runDoctor(options) {
   } else {
     checks.push(check('body_storage', 'pass', 'Full symbol body storage is enabled', 'info'));
   }
+
+  const goEnv = [
+    process.env.GOOS ? `GOOS=${process.env.GOOS}` : null,
+    process.env.GOARCH ? `GOARCH=${process.env.GOARCH}` : null,
+    process.env.CGO_ENABLED ? `CGO_ENABLED=${process.env.CGO_ENABLED}` : null,
+    process.env.MCP_MEMORY_GO_BUILD_TAGS ? `MCP_MEMORY_GO_BUILD_TAGS=${process.env.MCP_MEMORY_GO_BUILD_TAGS}` : null,
+  ].filter(Boolean);
+  checks.push(check('go_build_context', 'pass', goEnv.length > 0 ? goEnv.join(', ') : 'Using host GOOS/GOARCH defaults; no custom Go build tags configured', 'info'));
 
   const hasFailure = checks.some(item => item.status === 'fail');
   const hasWarning = checks.some(item => item.status === 'warn');

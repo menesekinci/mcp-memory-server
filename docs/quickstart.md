@@ -80,6 +80,8 @@ npx -y codex-mcp-memory-server
 | `PROJECT_ID` | Basename of `PROJECT_PATH` | Logical project key used in SQLite records. |
 | `MCP_MEMORY_DB_PATH` | `~/.mcp-memory-server/memory.db` | SQLite database path. |
 | `MCP_MEMORY_DISABLE_BODY_STORAGE` | unset | Set to `1` to store symbol metadata/signatures without persisting source bodies. |
+| `MCP_MEMORY_GO_BUILD_TAGS` | unset | Extra comma/space-separated Go build tags used when deciding which Go files are active. |
+| `GOOS` / `GOARCH` / `CGO_ENABLED` | host platform | Optional Go build context overrides for Go file suffixes and build constraints. |
 | `INSTALL_GIT_HOOKS` | unset | Set to `1` to install local git hooks. Disabled by default. |
 
 ## Verify

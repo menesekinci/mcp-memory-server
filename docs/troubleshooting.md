@@ -5,10 +5,19 @@
 Check:
 
 - `PROJECT_PATH` points to the repository root.
-- The project has supported files: `.ts`, `.tsx`, `.js`, `.jsx`, or `.py`.
+- The project has supported files: `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, or `.go`.
 - Files are not under ignored directories such as `.git`, `node_modules`, or `dist`.
 - Files are not excluded by `.mcp-memoryignore`.
 - Files are not excluded by secret detection.
+- Go files are not excluded by inactive `//go:build`, legacy `// +build`, or GOOS/GOARCH filename suffix constraints.
+
+For Go projects with custom build tags, set:
+
+```powershell
+$env:MCP_MEMORY_GO_BUILD_TAGS="integration,enterprise"
+```
+
+Then rerun indexing or restart the MCP server. `mcp-memory-doctor` reports the active Go build context.
 
 ## MCP Tool Is Not Available In Codex
 

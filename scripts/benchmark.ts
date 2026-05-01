@@ -345,6 +345,8 @@ async function benchmarkLanguageDepth(): Promise<BenchmarkResult> {
     const goGeneratedFile = path.join(projectPath, 'go', 'cart', 'cart.pb.go');
     const goBuildTaggedFile = path.join(projectPath, 'go', 'cart', 'ignored.go');
     const goImpossibleBuildFile = path.join(projectPath, 'go', 'cart', 'impossible.go');
+    const goSuffixBuildFile = path.join(projectPath, 'go', 'cart', 'suffix_plan9.go');
+    const goCustomBuildFile = path.join(projectPath, 'go', 'cart', 'custom.go');
     const goVendorFile = path.join(projectPath, 'vendor', 'example.com', 'vendorpkg', 'vendorpkg.go');
     const goWorkFile = path.join(projectPath, 'go.work');
     const goWorkspaceAppModFile = path.join(projectPath, 'workspace', 'app', 'go.mod');
@@ -486,6 +488,22 @@ func ImpossibleBuildTagNoise() int {
     return 1
 }
 `);
+    writeFile(goSuffixBuildFile, `
+package cart
+
+func Plan9SuffixNoise() int {
+    return 1
+}
+`);
+    writeFile(goCustomBuildFile, `
+//go:build mcpmemory
+
+package cart
+
+func CustomTaggedGo() int {
+    return 7
+}
+`);
     writeFile(goVendorFile, `
 package vendorpkg
 
@@ -572,6 +590,8 @@ class UsesWorker:
         return self.worker.run()
 `);
 
+    const previousGoBuildTags = process.env.MCP_MEMORY_GO_BUILD_TAGS;
+    process.env.MCP_MEMORY_GO_BUILD_TAGS = [previousGoBuildTags, 'mcpmemory'].filter(Boolean).join(',');
     const runtime = await withRuntime(projectPath, projectId);
     const watcher = runtime.startIndexer(projectPath, projectId);
     try {
@@ -616,7 +636,11 @@ class UsesWorker:
               .get(projectId, goBuildTaggedFile) as { is_excluded: number } | undefined;
             const goImpossibleBuildExcluded = runtime.db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
               .get(projectId, goImpossibleBuildFile) as { is_excluded: number } | undefined;
-            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goReplaceTarget && goVendorTarget && goMethodTarget && goInterfaceTarget && goWorkspaceTarget && goGeneratedExcluded?.is_excluded === 1 && goBuildTaggedExcluded?.is_excluded === 1 && goImpossibleBuildExcluded?.is_excluded === 1);
+            const goSuffixBuildExcluded = runtime.db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
+              .get(projectId, goSuffixBuildFile) as { is_excluded: number } | undefined;
+            const goCustomTaggedTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'CustomTaggedGo', goCustomBuildFile);
+            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goReplaceTarget && goVendorTarget && goMethodTarget && goInterfaceTarget && goWorkspaceTarget && goGeneratedExcluded?.is_excluded === 1 && goBuildTaggedExcluded?.is_excluded === 1 && goImpossibleBuildExcluded?.is_excluded === 1 && goSuffixBuildExcluded?.is_excluded === 1 && goCustomTaggedTarget);
         });
 
         const jsTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -693,10 +717,14 @@ class UsesWorker:
           .get(projectId, goBuildTaggedFile) as { is_excluded: number } | undefined;
         const goImpossibleBuildExcluded = runtime.db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
           .get(projectId, goImpossibleBuildFile) as { is_excluded: number } | undefined;
+        const goSuffixBuildExcluded = runtime.db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
+          .get(projectId, goSuffixBuildFile) as { is_excluded: number } | undefined;
+        const goCustomTaggedTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'CustomTaggedGo', goCustomBuildFile) as { id: string } | undefined;
 
         return {
             name: 'language_depth_js_python_callers',
-            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python async: ${pyAsyncCallers.join(', ') || 'none'}; Python from/re-export: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}; Python instance-method: ${pyInstanceCallers.join(', ') || 'none'}; Python inherited-self: ${pyInheritedCallers.join(', ') || 'none'}; Python imported-base: ${pyRemoteCallers.join(', ') || 'none'}; Python super: ${pySuperCallers.join(', ') || 'none'}; Python self-attribute instance: ${pyWorkerCallers.join(', ') || 'none'}; Go same-package: ${goCallers.join(', ') || 'none'}; Go import/replace/vendor: ${[...goExternalCallers, ...goReplaceCallers, ...goVendorCallers].join(', ') || 'none'}; Go receiver/local/embedded/interface methods: ${[...goMethodCallers, ...goInterfaceCallers].join(', ') || 'none'}; Go workspace import: ${goWorkspaceCallers.join(', ') || 'none'}; generated excluded: ${goGeneratedExcluded?.is_excluded === 1}; build-tag excluded: ${goBuildTaggedExcluded?.is_excluded === 1}; false-build-expression excluded: ${goImpossibleBuildExcluded?.is_excluded === 1}.`,
+            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python async: ${pyAsyncCallers.join(', ') || 'none'}; Python from/re-export: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}; Python instance-method: ${pyInstanceCallers.join(', ') || 'none'}; Python inherited-self: ${pyInheritedCallers.join(', ') || 'none'}; Python imported-base: ${pyRemoteCallers.join(', ') || 'none'}; Python super: ${pySuperCallers.join(', ') || 'none'}; Python self-attribute instance: ${pyWorkerCallers.join(', ') || 'none'}; Go same-package: ${goCallers.join(', ') || 'none'}; Go import/replace/vendor: ${[...goExternalCallers, ...goReplaceCallers, ...goVendorCallers].join(', ') || 'none'}; Go receiver/local/embedded/interface methods: ${[...goMethodCallers, ...goInterfaceCallers].join(', ') || 'none'}; Go workspace import: ${goWorkspaceCallers.join(', ') || 'none'}; generated excluded: ${goGeneratedExcluded?.is_excluded === 1}; build-tag excluded: ${goBuildTaggedExcluded?.is_excluded === 1}; false-build-expression excluded: ${goImpossibleBuildExcluded?.is_excluded === 1}; suffix excluded: ${goSuffixBuildExcluded?.is_excluded === 1}; custom tag indexed: ${Boolean(goCustomTaggedTarget)}.`,
             passed: jsCallers.includes('checkout')
                 && pyCallers.includes('checkout_py')
                 && pyAsyncCallers.includes('checkout_async_py')
@@ -721,9 +749,13 @@ class UsesWorker:
                 && goGeneratedExcluded?.is_excluded === 1
                 && goBuildTaggedExcluded?.is_excluded === 1
                 && goImpossibleBuildExcluded?.is_excluded === 1
+                && goSuffixBuildExcluded?.is_excluded === 1
+                && Boolean(goCustomTaggedTarget)
         };
     } finally {
         await watcher.close();
+        if (previousGoBuildTags === undefined) delete process.env.MCP_MEMORY_GO_BUILD_TAGS;
+        else process.env.MCP_MEMORY_GO_BUILD_TAGS = previousGoBuildTags;
     }
 }
 

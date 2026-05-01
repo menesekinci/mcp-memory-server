@@ -111,4 +111,4 @@ Go caller extraction currently supports:
 - Generated Go files with the standard `Code generated ... DO NOT EDIT.` marker are excluded from symbol indexing to avoid noisy machine-generated callers.
 - Go files with false `//go:build` expressions, false legacy `// +build` lines, unsupported GOOS/GOARCH suffixes, or explicit `ignore` constraints are excluded from symbol indexing. The active platform uses `GOOS`, `GOARCH`, `CGO_ENABLED`, and optional `MCP_MEMORY_GO_BUILD_TAGS` when present.
 
-Go support is intentionally still early. Versioned/non-local replace targets, build tags that depend on project-specific custom tags, and more complex workspace layouts should be expanded after the core Go benchmarks and dogfooding stay stable.
+Go support is intentionally still early. Non-local replace targets and more complex workspace layouts should be expanded after the core Go benchmarks and dogfooding stay stable. Project-specific Go tags can already be supplied through `MCP_MEMORY_GO_BUILD_TAGS`.

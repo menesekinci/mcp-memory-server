@@ -563,9 +563,13 @@ function resolveGoPackageDir(fromFilePath: string, importPath: string) {
     const moduleRoot = findGoModuleRoot(path.dirname(fromFilePath));
     const local = moduleRoot ? resolveGoImportInModule(moduleRoot, importPath) : null;
     if (local) return local;
+    const vendor = resolveGoVendorImport(path.dirname(fromFilePath), importPath);
+    if (vendor) return vendor;
     for (const workspaceModule of findGoWorkspaceModules(path.dirname(fromFilePath))) {
         const resolved = resolveGoImportInModule(workspaceModule, importPath);
         if (resolved) return resolved;
+        const workspaceVendor = resolveGoVendorImport(workspaceModule, importPath);
+        if (workspaceVendor) return workspaceVendor;
     }
     return null;
 }
@@ -597,6 +601,18 @@ function resolveGoImportInModule(moduleRoot: string, importPath: string) {
         if (fs.existsSync(packageDir)) return packageDir;
     }
     return null;
+}
+
+function resolveGoVendorImport(startDir: string, importPath: string) {
+    let current = path.resolve(startDir);
+    while (true) {
+        const vendorPackageDir = path.join(current, 'vendor', ...importPath.split('/').filter(Boolean));
+        if (fs.existsSync(vendorPackageDir)) return vendorPackageDir;
+        if (fs.existsSync(path.join(current, 'go.mod'))) return null;
+        const parent = path.dirname(current);
+        if (parent === current) return null;
+        current = parent;
+    }
 }
 
 function parseGoReplaceTargets(goMod: string, moduleRoot: string) {
@@ -656,10 +672,20 @@ function findGoPackageSymbolFile(packageDir: string, symbolName: string) {
         if (!entry.endsWith('.go') || entry.endsWith('_test.go')) continue;
         const filePath = path.join(packageDir, entry);
         const content = fs.readFileSync(filePath, 'utf8');
+        if (isGeneratedGoSource(content) || isExcludedGoBuildSource(content)) continue;
         const pattern = new RegExp(`\\bfunc\\s+(?:\\([^)]*\\)\\s*)?${escapeRegex(symbolName)}\\s*\\(`);
         if (pattern.test(content)) return filePath;
     }
     return undefined;
+}
+
+function isGeneratedGoSource(content: string) {
+    return /Code generated .* DO NOT EDIT\./i.test(content.slice(0, 2048));
+}
+
+function isExcludedGoBuildSource(content: string) {
+    const header = content.slice(0, 2048);
+    return /\/\/go:build\s+ignore\b/.test(header) || /\/\/\s*\+build\s+ignore\b/.test(header);
 }
 
 function findFirstGoIdentifier(node: Parser.SyntaxNode): Parser.SyntaxNode | null {

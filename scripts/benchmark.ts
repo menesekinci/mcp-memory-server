@@ -343,6 +343,8 @@ async function benchmarkLanguageDepth(): Promise<BenchmarkResult> {
     const goPricingFile = path.join(projectPath, 'go', 'pricing', 'pricing.go');
     const goReplaceFile = path.join(projectPath, 'replaced', 'discount', 'discount.go');
     const goGeneratedFile = path.join(projectPath, 'go', 'cart', 'cart.pb.go');
+    const goBuildTaggedFile = path.join(projectPath, 'go', 'cart', 'ignored.go');
+    const goVendorFile = path.join(projectPath, 'vendor', 'example.com', 'vendorpkg', 'vendorpkg.go');
     const goWorkFile = path.join(projectPath, 'go.work');
     const goWorkspaceAppModFile = path.join(projectPath, 'workspace', 'app', 'go.mod');
     const goWorkspaceAppFile = path.join(projectPath, 'workspace', 'app', 'checkout', 'checkout.go');
@@ -395,6 +397,7 @@ package cart
 import (
     price "example.com/shop/go/pricing"
     discount "example.com/replaced/discount"
+    vendored "example.com/vendorpkg"
 )
 
 type Calculator struct{}
@@ -408,6 +411,10 @@ func CalculateTotal(value int) int {
 
 func CheckoutReplace(value int) int {
     return discount.Apply(value)
+}
+
+func CheckoutVendor(value int) int {
+    return vendored.Touch(value)
 }
 
 func CheckoutGo(value int) int {
@@ -458,6 +465,22 @@ package cart
 
 func GeneratedNoise() int {
     return 1
+}
+`);
+    writeFile(goBuildTaggedFile, `
+//go:build ignore
+
+package cart
+
+func IgnoredBuildTagNoise() int {
+    return 1
+}
+`);
+    writeFile(goVendorFile, `
+package vendorpkg
+
+func Touch(value int) int {
+    return value
 }
 `);
     writeFile(goWorkspaceAppModFile, 'module example.com/workspace/app\n\ngo 1.22\n');
@@ -569,6 +592,8 @@ class UsesWorker:
               .get(projectId, 'Round', goPricingFile);
             const goReplaceTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'Apply', goReplaceFile);
+            const goVendorTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'Touch', goVendorFile);
             const goMethodTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'Calculator.normalize', goFile);
             const goInterfaceTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
@@ -577,7 +602,9 @@ class UsesWorker:
               .get(projectId, 'WorkspaceRound', goWorkspaceLibFile);
             const goGeneratedExcluded = runtime.db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
               .get(projectId, goGeneratedFile) as { is_excluded: number } | undefined;
-            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goReplaceTarget && goMethodTarget && goInterfaceTarget && goWorkspaceTarget && goGeneratedExcluded?.is_excluded === 1);
+            const goBuildTaggedExcluded = runtime.db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
+              .get(projectId, goBuildTaggedFile) as { is_excluded: number } | undefined;
+            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goReplaceTarget && goVendorTarget && goMethodTarget && goInterfaceTarget && goWorkspaceTarget && goGeneratedExcluded?.is_excluded === 1 && goBuildTaggedExcluded?.is_excluded === 1);
         });
 
         const jsTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -606,6 +633,8 @@ class UsesWorker:
           .get(projectId, 'Round', goPricingFile) as { id: string };
         const goReplaceTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'Apply', goReplaceFile) as { id: string };
+        const goVendorTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'Touch', goVendorFile) as { id: string };
         const goMethodTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'Calculator.normalize', goFile) as { id: string };
         const goInterfaceTarget = runtime.db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
@@ -625,6 +654,7 @@ class UsesWorker:
         const goPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: goTarget.id, min_confidence: 0.0 })).content[0].text);
         const goExternalPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: goExternalTarget.id, min_confidence: 0.0 })).content[0].text);
         const goReplacePayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: goReplaceTarget.id, min_confidence: 0.0 })).content[0].text);
+        const goVendorPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: goVendorTarget.id, min_confidence: 0.0 })).content[0].text);
         const goMethodPayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: goMethodTarget.id, min_confidence: 0.0 })).content[0].text);
         const goInterfacePayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: goInterfaceTarget.id, min_confidence: 0.0 })).content[0].text);
         const goWorkspacePayload = JSON.parse((await runtime.callTool('find_callers', { symbol_id: goWorkspaceTarget.id, min_confidence: 0.0 })).content[0].text);
@@ -641,15 +671,18 @@ class UsesWorker:
         const goCallers = goPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const goExternalCallers = goExternalPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const goReplaceCallers = goReplacePayload.definite_callers.map((caller: any) => caller.qualified_name);
+        const goVendorCallers = goVendorPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const goMethodCallers = goMethodPayload.definite_callers.map((caller: any) => caller.qualified_name);
         const goInterfaceCallers = goInterfacePayload.definite_callers.map((caller: any) => caller.qualified_name);
         const goWorkspaceCallers = goWorkspacePayload.definite_callers.map((caller: any) => caller.qualified_name);
         const goGeneratedExcluded = runtime.db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
           .get(projectId, goGeneratedFile) as { is_excluded: number } | undefined;
+        const goBuildTaggedExcluded = runtime.db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
+          .get(projectId, goBuildTaggedFile) as { is_excluded: number } | undefined;
 
         return {
             name: 'language_depth_js_python_callers',
-            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python async: ${pyAsyncCallers.join(', ') || 'none'}; Python from/re-export: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}; Python instance-method: ${pyInstanceCallers.join(', ') || 'none'}; Python inherited-self: ${pyInheritedCallers.join(', ') || 'none'}; Python imported-base: ${pyRemoteCallers.join(', ') || 'none'}; Python super: ${pySuperCallers.join(', ') || 'none'}; Python self-attribute instance: ${pyWorkerCallers.join(', ') || 'none'}; Go same-package: ${goCallers.join(', ') || 'none'}; Go import/replace: ${[...goExternalCallers, ...goReplaceCallers].join(', ') || 'none'}; Go receiver/local/embedded/interface methods: ${[...goMethodCallers, ...goInterfaceCallers].join(', ') || 'none'}; Go workspace import: ${goWorkspaceCallers.join(', ') || 'none'}; generated excluded: ${goGeneratedExcluded?.is_excluded === 1}.`,
+            notes: `JavaScript callers: ${jsCallers.join(', ') || 'none'}; Python same-file: ${pyCallers.join(', ') || 'none'}; Python async: ${pyAsyncCallers.join(', ') || 'none'}; Python from/re-export: ${pyExternalCallers.join(', ') || 'none'}; Python module-import: ${pyModuleCallers.join(', ') || 'none'}; Python instance-method: ${pyInstanceCallers.join(', ') || 'none'}; Python inherited-self: ${pyInheritedCallers.join(', ') || 'none'}; Python imported-base: ${pyRemoteCallers.join(', ') || 'none'}; Python super: ${pySuperCallers.join(', ') || 'none'}; Python self-attribute instance: ${pyWorkerCallers.join(', ') || 'none'}; Go same-package: ${goCallers.join(', ') || 'none'}; Go import/replace/vendor: ${[...goExternalCallers, ...goReplaceCallers, ...goVendorCallers].join(', ') || 'none'}; Go receiver/local/embedded/interface methods: ${[...goMethodCallers, ...goInterfaceCallers].join(', ') || 'none'}; Go workspace import: ${goWorkspaceCallers.join(', ') || 'none'}; generated excluded: ${goGeneratedExcluded?.is_excluded === 1}; build-tag excluded: ${goBuildTaggedExcluded?.is_excluded === 1}.`,
             passed: jsCallers.includes('checkout')
                 && pyCallers.includes('checkout_py')
                 && pyAsyncCallers.includes('checkout_async_py')
@@ -665,12 +698,14 @@ class UsesWorker:
                 && goCallers.includes('CheckoutGo')
                 && goExternalCallers.includes('CalculateTotal')
                 && goReplaceCallers.includes('CheckoutReplace')
+                && goVendorCallers.includes('CheckoutVendor')
                 && goMethodCallers.includes('Calculator.Total')
                 && goMethodCallers.includes('BuildWithLocal')
                 && goMethodCallers.includes('AdvancedCalculator.Total')
                 && goInterfaceCallers.includes('CheckoutInterface')
                 && goWorkspaceCallers.includes('CheckoutWorkspace')
                 && goGeneratedExcluded?.is_excluded === 1
+                && goBuildTaggedExcluded?.is_excluded === 1
         };
     } finally {
         await watcher.close();

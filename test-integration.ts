@@ -1013,6 +1013,8 @@ async function testLanguageDepth(db: TestDb, startIndexer: (projectPath: string,
     const goPricingFile = path.join(projectPath, 'go', 'pricing', 'pricing.go');
     const goReplaceFile = path.join(projectPath, 'replaced', 'discount', 'discount.go');
     const goGeneratedFile = path.join(projectPath, 'go', 'cart', 'cart.pb.go');
+    const goBuildTaggedFile = path.join(projectPath, 'go', 'cart', 'ignored.go');
+    const goVendorFile = path.join(projectPath, 'vendor', 'example.com', 'vendorpkg', 'vendorpkg.go');
     const goWorkFile = path.join(projectPath, 'go.work');
     const goWorkspaceAppModFile = path.join(projectPath, 'workspace', 'app', 'go.mod');
     const goWorkspaceAppFile = path.join(projectPath, 'workspace', 'app', 'checkout', 'checkout.go');
@@ -1080,6 +1082,7 @@ package cart
 import (
     price "example.com/shop/go/pricing"
     discount "example.com/replaced/discount"
+    vendored "example.com/vendorpkg"
 )
 
 type Calculator struct{}
@@ -1093,6 +1096,10 @@ func CalculateTotal(value int) int {
 
 func CheckoutReplace(value int) int {
     return discount.Apply(value)
+}
+
+func CheckoutVendor(value int) int {
+    return vendored.Touch(value)
 }
 
 func CheckoutGo(value int) int {
@@ -1143,6 +1150,22 @@ package cart
 
 func GeneratedNoise() int {
     return 1
+}
+`);
+    writeFile(goBuildTaggedFile, `
+//go:build ignore
+
+package cart
+
+func IgnoredBuildTagNoise() int {
+    return 1
+}
+`);
+    writeFile(goVendorFile, `
+package vendorpkg
+
+func Touch(value int) int {
+    return value
 }
 `);
     writeFile(goWorkspaceAppModFile, 'module example.com/workspace/app\n\ngo 1.22\n');
@@ -1263,6 +1286,8 @@ def mention_only_py():
               .get(projectId, 'Round', goPricingFile);
             const goReplaceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'Apply', goReplaceFile);
+            const goVendorTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'Touch', goVendorFile);
             const goMethodTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'Calculator.normalize', goFile);
             const goInterfaceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
@@ -1271,7 +1296,9 @@ def mention_only_py():
               .get(projectId, 'WorkspaceRound', goWorkspaceLibFile);
             const goGeneratedExcluded = db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
               .get(projectId, goGeneratedFile) as { is_excluded: number } | undefined;
-            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goReplaceTarget && goMethodTarget && goInterfaceTarget && goWorkspaceTarget && goGeneratedExcluded?.is_excluded === 1);
+            const goBuildTaggedExcluded = db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
+              .get(projectId, goBuildTaggedFile) as { is_excluded: number } | undefined;
+            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goReplaceTarget && goVendorTarget && goMethodTarget && goInterfaceTarget && goWorkspaceTarget && goGeneratedExcluded?.is_excluded === 1 && goBuildTaggedExcluded?.is_excluded === 1);
         });
 
         const jsTarget = db.prepare("SELECT id, language FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -1395,6 +1422,14 @@ def mention_only_py():
         }));
         assert(goReplaceCallers.definite_callers.some(c => c.qualified_name === 'CheckoutReplace' && c.resolution_method === 'ast_go_import'), 'Go replace directives should resolve local replacement module imports');
 
+        const goVendorTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'Touch', goVendorFile) as { id: string } | undefined;
+        const goVendorCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: goVendorTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(goVendorCallers.definite_callers.some(c => c.qualified_name === 'CheckoutVendor' && c.resolution_method === 'ast_go_import'), 'Go vendor imports should resolve local vendored package callers');
+
         const goMethodTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'Calculator.normalize', goFile) as { id: string } | undefined;
         const goMethodCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
@@ -1416,6 +1451,10 @@ def mention_only_py():
         const generatedSymbol = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'GeneratedNoise', goGeneratedFile);
         assert(!generatedSymbol, 'Generated Go files should be excluded from symbol indexing');
+
+        const buildTaggedSymbol = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'IgnoredBuildTagNoise', goBuildTaggedFile);
+        assert(!buildTaggedSymbol, 'Go files tagged with ignore build constraints should be excluded from symbol indexing');
 
         const goWorkspaceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'WorkspaceRound', goWorkspaceLibFile) as { id: string } | undefined;

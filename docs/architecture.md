@@ -102,11 +102,13 @@ Go caller extraction currently supports:
 - Same-package function calls.
 - `go.mod` module import resolution for package selector calls such as `price.Round()`.
 - Local `go.mod replace` targets for package selector calls.
+- Local `vendor/<import-path>` package resolution.
 - `go.work` workspace import resolution across local modules.
 - Same-type receiver method calls such as `c.normalize()`.
 - Local constructor-assigned instance method calls such as `calc := &Calculator{}` followed by `calc.normalize()`.
 - Embedded struct promoted method calls such as `AdvancedCalculator` embedding `Calculator` and calling `a.normalize()`.
 - Simple interface parameter dispatch such as `func Checkout(p Pricer) { p.Price() }`, emitted as lower-confidence concrete method candidates when local types implement the method.
 - Generated Go files with the standard `Code generated ... DO NOT EDIT.` marker are excluded from symbol indexing to avoid noisy machine-generated callers.
+- Go files with explicit `ignore` build constraints are excluded from symbol indexing.
 
-Go support is intentionally still early. Build tags, vendor handling, versioned/non-local replace targets, and more complex workspace layouts should be expanded after the core Go benchmarks and dogfooding stay stable.
+Go support is intentionally still early. Full build tag expression evaluation, versioned/non-local replace targets, and more complex workspace layouts should be expanded after the core Go benchmarks and dogfooding stay stable.

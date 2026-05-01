@@ -4,7 +4,7 @@
 
 Symbol-aware MCP memory server for Codex and coding agents.
 
-It indexes TypeScript, TSX, JavaScript, JSX, Python, and Go projects with tree-sitter, stores symbol metadata in SQLite, and exposes compact MCP tools for low-token project discovery. The current implementation is TS/JS-first for caller precision, including imports, barrel re-exports, selective TypeScript compiler API symbol resolution, simple instance method calls, and TSX/JSX component usage. Python supports symbol discovery, async functions, same-file calls, relative/module import calls, dotted module imports, package `__init__.py` re-exports, `self.method()` calls, same-file and imported-base inherited `self.method()` calls, `super().method()` calls, and local or `self.attr` constructor-assigned instance method calls. Go support starts with functions, structs, receiver methods, same-package calls, `go.mod`, local `replace`, and `go.work` module import calls, local constructor-assigned instance method calls, receiver method calls, embedded struct promoted method calls, simple interface parameter dispatch, and generated Go file exclusion.
+It indexes TypeScript, TSX, JavaScript, JSX, Python, and Go projects with tree-sitter, stores symbol metadata in SQLite, and exposes compact MCP tools for low-token project discovery. The current implementation is TS/JS-first for caller precision, including imports, barrel re-exports, selective TypeScript compiler API symbol resolution, simple instance method calls, and TSX/JSX component usage. Python supports symbol discovery, async functions, same-file calls, relative/module import calls, dotted module imports, package `__init__.py` re-exports, `self.method()` calls, same-file and imported-base inherited `self.method()` calls, `super().method()` calls, and local or `self.attr` constructor-assigned instance method calls. Go support starts with functions, structs, receiver methods, same-package calls, `go.mod`, local `replace`, `vendor`, and `go.work` module import calls, local constructor-assigned instance method calls, receiver method calls, embedded struct promoted method calls, simple interface parameter dispatch, generated Go file exclusion, and `ignore` build-constraint exclusion.
 
 ## Why
 
@@ -22,10 +22,10 @@ Agents often spend a lot of tokens finding the right file or function before rea
 Current benchmark task: find the `callTool` symbol in this repository.
 
 ```text
-classic_tokens=6639
+classic_tokens=6731
 mcp_tokens=50
-savings=99.2%
-smaller_output=132.8x
+savings=99.3%
+smaller_output=134.6x
 ```
 
 Token counts are practical estimates based on `characters / 4`; the important point is the relative size difference during the discovery phase.

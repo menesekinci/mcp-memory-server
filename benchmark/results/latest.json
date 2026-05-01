@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-05-01T10:18:11.075Z",
+  "generated_at": "2026-05-01T10:26:14.945Z",
   "results": [
     {
       "name": "symbol_discovery_callTool",
-      "classic_chars": 26554,
-      "classic_tokens": 6639,
+      "classic_chars": 26921,
+      "classic_tokens": 6731,
       "mcp_chars": 200,
       "mcp_tokens": 50,
-      "token_savings_pct": 99.2,
+      "token_savings_pct": 99.3,
       "notes": "Find the callTool symbol with broad text search versus compact MCP symbol search.",
       "passed": true
     },
@@ -33,7 +33,7 @@
     },
     {
       "name": "language_depth_js_python_callers",
-      "notes": "JavaScript callers: checkout; Python same-file: checkout_py; Python async: checkout_async_py; Python from/re-export: checkout_external_py, checkout_reexport_py; Python module-import: checkout_module_py, checkout_nested_module_py; Python instance-method: checkout_instance_py; Python inherited-self: AdvancedCalculator.total; Python imported-base: RemoteAdvancedCalculator.total; Python super: SuperAdvancedCalculator.total; Python self-attribute instance: UsesWorker.execute; Go same-package: CheckoutGo; Go import/replace: CalculateTotal, CheckoutReplace; Go receiver/local/embedded/interface methods: Calculator.Total, BuildWithLocal, AdvancedCalculator.Total, CheckoutInterface; Go workspace import: CheckoutWorkspace; generated excluded: true.",
+      "notes": "JavaScript callers: checkout; Python same-file: checkout_py; Python async: checkout_async_py; Python from/re-export: checkout_external_py, checkout_reexport_py; Python module-import: checkout_module_py, checkout_nested_module_py; Python instance-method: checkout_instance_py; Python inherited-self: AdvancedCalculator.total; Python imported-base: RemoteAdvancedCalculator.total; Python super: SuperAdvancedCalculator.total; Python self-attribute instance: UsesWorker.execute; Go same-package: CheckoutGo; Go import/replace/vendor: CalculateTotal, CheckoutReplace, CheckoutVendor; Go receiver/local/embedded/interface methods: Calculator.Total, BuildWithLocal, AdvancedCalculator.Total, CheckoutInterface; Go workspace import: CheckoutWorkspace; generated excluded: true; build-tag excluded: true.",
       "passed": true
     },
     {
@@ -83,12 +83,12 @@
     },
     {
       "name": "performance_scale_10k_symbols",
-      "notes": "Cold index: 5809ms for 1000 files/10001 symbols; search: 4.4ms; caller: 2.2ms; incremental: 146.5ms for 1 changed file; risk: 216.7ms for 26 changed files; db: 8.3MB.",
+      "notes": "Cold index: 5364ms for 1000 files/10001 symbols; search: 3.8ms; caller: 1.9ms; incremental: 121.5ms for 1 changed file; risk: 175.7ms for 26 changed files; db: 8.3MB.",
       "passed": true
     },
     {
       "name": "performance_monorepo_workspace",
-      "notes": "Cold index: 3895ms for 20 packages/800 files/4801 symbols; search: 2ms; caller: 1ms; incremental: 173.8ms for 1 changed file; risk: 110.9ms for 6 changed files; db: 12.6MB.",
+      "notes": "Cold index: 4206ms for 20 packages/800 files/4801 symbols; search: 1.9ms; caller: 0.9ms; incremental: 161.9ms for 1 changed file; risk: 103.1ms for 6 changed files; db: 12.6MB.",
       "passed": true
     }
   ]

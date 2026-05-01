@@ -174,6 +174,7 @@ type GoReceiverMap = Map<string, { receiverName: string; typeName: string }>;
 type GoObjectTypeMap = Map<string, { typeName: string; filePath: string }>;
 type GoEmbeddedTypeMap = Map<string, string[]>;
 type GoMethodMap = Map<string, Set<string>>;
+type GoInterfaceMethodMap = Map<string, Set<string>>;
 
 function extractGoCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[], filePath: string): CallReference[] {
     const calls: CallReference[] = [];
@@ -181,6 +182,7 @@ function extractGoCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[], fi
     const receivers = extractGoReceivers(tree.rootNode, symbols);
     const objectTypes = extractGoObjectTypes(tree.rootNode, filePath);
     const embeddedTypes = extractGoEmbeddedTypes(tree.rootNode);
+    const interfaceMethods = extractGoInterfaceMethods(tree.rootNode);
     const methods = collectGoMethods(symbols);
 
     function traverse(node: Parser.SyntaxNode) {
@@ -190,8 +192,26 @@ function extractGoCallReferences(tree: Parser.Tree, symbols: IndexedSymbol[], fi
             if (callee && caller && (callee.memberName || callee.localName) !== caller.name) {
                 const imported = callee.memberName ? resolveGoImportedTarget(callee, imports) : null;
                 const instanceMethod = !imported && callee.memberName
-                    ? resolveGoInstanceMethod(callee, caller, objectTypes, methods, embeddedTypes, filePath)
+                    ? resolveGoInstanceMethod(callee, caller, objectTypes, methods, embeddedTypes, interfaceMethods, filePath)
                     : null;
+                const interfaceTargets = !imported && !instanceMethod && callee.memberName
+                    ? resolveGoInterfaceMethodTargets(callee, caller, objectTypes, methods, interfaceMethods, filePath)
+                    : [];
+                if (interfaceTargets.length > 0) {
+                    for (const target of interfaceTargets) {
+                        calls.push({
+                            caller_symbol_id: caller.id,
+                            target_name: callee.memberName,
+                            target_qualified_name: target.qualifiedName,
+                            target_file_path: target.filePath,
+                            file_path: filePath,
+                            line: node.startPosition.row + 1,
+                            confidence: 0.72,
+                            resolution_method: 'ast_go_interface_dispatch'
+                        });
+                    }
+                    return;
+                }
                 const receiverMethod = !imported && !instanceMethod && callee.memberName
                     ? resolveGoReceiverMethod(callee, caller, receivers, methods, embeddedTypes, filePath)
                     : null;
@@ -287,8 +307,11 @@ function extractGoObjectTypes(root: Parser.SyntaxNode, filePath: string): GoObje
         if (node.type === 'function_declaration' || node.type === 'method_declaration') {
             const nameNode = node.childForFieldName('name');
             const qualifiedFunction = nameNode ? goFunctionScopeName(node, nameNode.text) : functionScope;
+            const receiverNode = node.type === 'method_declaration' ? node.childForFieldName('receiver') : null;
             for (let i = 0; i < node.namedChildCount; i++) {
-                traverse(node.namedChild(i), qualifiedFunction);
+                const child = node.namedChild(i);
+                if (receiverNode && child.id === receiverNode.id) continue;
+                traverse(child, qualifiedFunction);
             }
             return;
         }
@@ -301,6 +324,14 @@ function extractGoObjectTypes(root: Parser.SyntaxNode, filePath: string): GoObje
             if (variableName && typeName) {
                 objectTypes.set(goObjectTypeKey(variableName, functionScope), { typeName, filePath });
             }
+        } else if (node.type === 'parameter_declaration' && functionScope) {
+            const typeName = findFirstGoTypeIdentifier(node)?.text;
+            const names = goParameterNames(node, typeName);
+            if (typeName) {
+                for (const name of names) {
+                    objectTypes.set(goObjectTypeKey(name, functionScope), { typeName, filePath });
+                }
+            }
         }
 
         for (let i = 0; i < node.namedChildCount; i++) {
@@ -310,6 +341,44 @@ function extractGoObjectTypes(root: Parser.SyntaxNode, filePath: string): GoObje
 
     traverse(root);
     return objectTypes;
+}
+
+function extractGoInterfaceMethods(root: Parser.SyntaxNode): GoInterfaceMethodMap {
+    const interfaces: GoInterfaceMethodMap = new Map();
+
+    function traverse(node: Parser.SyntaxNode) {
+        if (node.type === 'type_spec') {
+            const nameNode = node.childForFieldName('name');
+            const typeNode = node.childForFieldName('type');
+            if (nameNode && typeNode?.type === 'interface_type') {
+                const methods = new Set<string>();
+                for (const match of typeNode.text.matchAll(/\b([A-Za-z_]\w*)\s*\(/g)) {
+                    methods.add(match[1]);
+                }
+                for (let i = 0; i < typeNode.namedChildCount; i++) {
+                    collectGoInterfaceMethodNames(typeNode.namedChild(i), methods);
+                }
+                if (methods.size > 0) interfaces.set(nameNode.text, methods);
+            }
+        }
+
+        for (let i = 0; i < node.namedChildCount; i++) {
+            traverse(node.namedChild(i));
+        }
+    }
+
+    traverse(root);
+    return interfaces;
+}
+
+function collectGoInterfaceMethodNames(node: Parser.SyntaxNode, methods: Set<string>) {
+    if (node.type === 'method_elem' || node.type === 'method_spec') {
+        const name = findFirstGoIdentifier(node)?.text;
+        if (name) methods.add(name);
+    }
+    for (let i = 0; i < node.namedChildCount; i++) {
+        collectGoInterfaceMethodNames(node.namedChild(i), methods);
+    }
 }
 
 function extractGoEmbeddedTypes(root: Parser.SyntaxNode): GoEmbeddedTypeMap {
@@ -371,11 +440,13 @@ function resolveGoInstanceMethod(
     objectTypes: GoObjectTypeMap,
     methods: GoMethodMap,
     embeddedTypes: GoEmbeddedTypeMap,
+    interfaceMethods: GoInterfaceMethodMap,
     filePath: string
 ) {
     if (!callee.memberName) return null;
     const objectType = objectTypes.get(goObjectTypeKey(callee.localName, caller.qualified_name)) || objectTypes.get(callee.localName);
     if (!objectType) return null;
+    if (interfaceMethods.get(objectType.typeName)?.has(callee.memberName)) return null;
     const targetType = resolveGoMethodOwner(objectType.typeName, callee.memberName, methods, embeddedTypes, objectType.filePath || filePath);
     return {
         name: callee.memberName,
@@ -383,6 +454,25 @@ function resolveGoInstanceMethod(
         filePath: objectType.filePath || filePath,
         method: targetType.promoted ? 'ast_go_embedded_method' : 'ast_go_instance_method'
     };
+}
+
+function resolveGoInterfaceMethodTargets(
+    callee: Callee,
+    caller: IndexedSymbol,
+    objectTypes: GoObjectTypeMap,
+    methods: GoMethodMap,
+    interfaceMethods: GoInterfaceMethodMap,
+    filePath: string
+) {
+    if (!callee.memberName) return [];
+    const objectType = objectTypes.get(goObjectTypeKey(callee.localName, caller.qualified_name)) || objectTypes.get(callee.localName);
+    if (!objectType || !interfaceMethods.get(objectType.typeName)?.has(callee.memberName)) return [];
+    return [...methods.entries()]
+        .filter(([typeName, methodNames]) => typeName !== objectType.typeName && methodNames.has(callee.memberName))
+        .map(([typeName]) => ({
+            qualifiedName: `${typeName}.${callee.memberName}`,
+            filePath
+        }));
 }
 
 function resolveGoReceiverMethod(
@@ -459,6 +549,16 @@ function goConstructedTypeName(node: Parser.SyntaxNode): string | null {
     return null;
 }
 
+function goParameterNames(node: Parser.SyntaxNode, typeName: string | undefined) {
+    if (!typeName) return [];
+    const names: string[] = [];
+    for (let i = 0; i < node.namedChildCount; i++) {
+        const child = node.namedChild(i);
+        if (child.type === 'identifier') names.push(child.text);
+    }
+    return names.filter(name => name !== typeName);
+}
+
 function resolveGoPackageDir(fromFilePath: string, importPath: string) {
     const moduleRoot = findGoModuleRoot(path.dirname(fromFilePath));
     const local = moduleRoot ? resolveGoImportInModule(moduleRoot, importPath) : null;
@@ -485,10 +585,40 @@ function resolveGoImportInModule(moduleRoot: string, importPath: string) {
     if (!fs.existsSync(goModPath)) return null;
     const goMod = fs.readFileSync(goModPath, 'utf8');
     const moduleName = goMod.match(/^module\s+(.+)$/m)?.[1]?.trim();
-    if (!moduleName || !importPath.startsWith(moduleName)) return null;
-    const relativePath = importPath.slice(moduleName.length).replace(/^\/+/, '');
-    const packageDir = path.join(moduleRoot, ...relativePath.split('/').filter(Boolean));
-    return fs.existsSync(packageDir) ? packageDir : null;
+    if (moduleName && importPath.startsWith(moduleName)) {
+        const relativePath = importPath.slice(moduleName.length).replace(/^\/+/, '');
+        const packageDir = path.join(moduleRoot, ...relativePath.split('/').filter(Boolean));
+        return fs.existsSync(packageDir) ? packageDir : null;
+    }
+    for (const replacement of parseGoReplaceTargets(goMod, moduleRoot)) {
+        if (!importPath.startsWith(replacement.modulePath)) continue;
+        const relativePath = importPath.slice(replacement.modulePath.length).replace(/^\/+/, '');
+        const packageDir = path.join(replacement.localPath, ...relativePath.split('/').filter(Boolean));
+        if (fs.existsSync(packageDir)) return packageDir;
+    }
+    return null;
+}
+
+function parseGoReplaceTargets(goMod: string, moduleRoot: string) {
+    const replacements: Array<{ modulePath: string; localPath: string }> = [];
+    const addReplacement = (line: string) => {
+        const normalized = line.replace(/\/\/.*$/, '').trim();
+        const match = normalized.match(/^replace\s+(\S+)(?:\s+v\S+)?\s+=>\s+(\S+)/) || normalized.match(/^(\S+)(?:\s+v\S+)?\s+=>\s+(\S+)/);
+        if (!match) return;
+        const [, modulePath, targetPath] = match;
+        if (!targetPath.startsWith('.') && !path.isAbsolute(targetPath)) return;
+        replacements.push({ modulePath, localPath: path.resolve(moduleRoot, targetPath) });
+    };
+
+    for (const match of goMod.matchAll(/^replace\s+(.+)$/gm)) {
+        const line = match[1].trim();
+        if (line && !line.startsWith('(')) addReplacement(`replace ${line}`);
+    }
+    const replaceBlock = goMod.match(/replace\s*\(([\s\S]*?)\)/m)?.[1];
+    for (const rawLine of (replaceBlock || '').split(/\r?\n/)) {
+        addReplacement(rawLine);
+    }
+    return replacements;
 }
 
 function findGoWorkspaceModules(startDir: string) {

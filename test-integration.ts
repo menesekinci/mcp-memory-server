@@ -1011,6 +1011,7 @@ async function testLanguageDepth(db: TestDb, startIndexer: (projectPath: string,
     const goModFile = path.join(projectPath, 'go.mod');
     const goFile = path.join(projectPath, 'go', 'cart', 'cart.go');
     const goPricingFile = path.join(projectPath, 'go', 'pricing', 'pricing.go');
+    const goReplaceFile = path.join(projectPath, 'replaced', 'discount', 'discount.go');
     const goGeneratedFile = path.join(projectPath, 'go', 'cart', 'cart.pb.go');
     const goWorkFile = path.join(projectPath, 'go.work');
     const goWorkspaceAppModFile = path.join(projectPath, 'workspace', 'app', 'go.mod');
@@ -1064,7 +1065,7 @@ class RemoteBaseCalculator:
 def round_money(value):
     return value
 `);
-    writeFile(goModFile, 'module example.com/shop\n\ngo 1.22\n');
+    writeFile(goModFile, 'module example.com/shop\n\ngo 1.22\n\nreplace example.com/replaced => ./replaced\n');
     writeFile(goWorkFile, 'go 1.22\n\nuse (\n    ./workspace/app\n    ./workspace/lib\n)\n');
     writeFile(goPricingFile, `
 package pricing
@@ -1076,7 +1077,10 @@ func Round(value int) int {
     writeFile(goFile, `
 package cart
 
-import price "example.com/shop/go/pricing"
+import (
+    price "example.com/shop/go/pricing"
+    discount "example.com/replaced/discount"
+)
 
 type Calculator struct{}
 type AdvancedCalculator struct {
@@ -1085,6 +1089,10 @@ type AdvancedCalculator struct {
 
 func CalculateTotal(value int) int {
     return price.Round(value)
+}
+
+func CheckoutReplace(value int) int {
+    return discount.Apply(value)
 }
 
 func CheckoutGo(value int) int {
@@ -1106,6 +1114,27 @@ func BuildWithLocal(value int) int {
 
 func (a *AdvancedCalculator) Total(value int) int {
     return a.normalize(value)
+}
+
+type Pricer interface {
+    Price() int
+}
+
+type FixedPricer struct{}
+
+func (f *FixedPricer) Price() int {
+    return 42
+}
+
+func CheckoutInterface(p Pricer) int {
+    return p.Price()
+}
+`);
+    writeFile(goReplaceFile, `
+package discount
+
+func Apply(value int) int {
+    return value
 }
 `);
     writeFile(goGeneratedFile, `
@@ -1232,13 +1261,17 @@ def mention_only_py():
               .get(projectId, 'CalculateTotal', goFile);
             const goExternalTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'Round', goPricingFile);
+            const goReplaceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'Apply', goReplaceFile);
             const goMethodTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'Calculator.normalize', goFile);
+            const goInterfaceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
+              .get(projectId, 'FixedPricer.Price', goFile);
             const goWorkspaceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
               .get(projectId, 'WorkspaceRound', goWorkspaceLibFile);
             const goGeneratedExcluded = db.prepare("SELECT is_excluded FROM files WHERE project_id = ? AND path = ?")
               .get(projectId, goGeneratedFile) as { is_excluded: number } | undefined;
-            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goMethodTarget && goWorkspaceTarget && goGeneratedExcluded?.is_excluded === 1);
+            return Boolean(jsTarget && pyTarget && pyAsyncTarget && pyExternalTarget && pyModuleTarget && pyInstanceTarget && pyInheritedTarget && pyRemoteTarget && pySuperTarget && pyWorkerTarget && goTarget && goExternalTarget && goReplaceTarget && goMethodTarget && goInterfaceTarget && goWorkspaceTarget && goGeneratedExcluded?.is_excluded === 1);
         });
 
         const jsTarget = db.prepare("SELECT id, language FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
@@ -1354,6 +1387,14 @@ def mention_only_py():
         }));
         assert(goExternalCallers.definite_callers.some(c => c.qualified_name === 'CalculateTotal' && c.resolution_method === 'ast_go_import'), 'Go module import aliases should resolve cross-package function callers');
 
+        const goReplaceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'Apply', goReplaceFile) as { id: string } | undefined;
+        const goReplaceCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: goReplaceTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(goReplaceCallers.definite_callers.some(c => c.qualified_name === 'CheckoutReplace' && c.resolution_method === 'ast_go_import'), 'Go replace directives should resolve local replacement module imports');
+
         const goMethodTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'Calculator.normalize', goFile) as { id: string } | undefined;
         const goMethodCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
@@ -1363,6 +1404,14 @@ def mention_only_py():
         assert(goMethodCallers.definite_callers.some(c => c.qualified_name === 'Calculator.Total' && c.resolution_method === 'ast_go_receiver_method'), 'Go receiver method calls should resolve same-type method callers');
         assert(goMethodCallers.definite_callers.some(c => c.qualified_name === 'BuildWithLocal' && c.resolution_method === 'ast_go_instance_method'), 'Go local constructor-assigned variables should resolve instance method callers');
         assert(goMethodCallers.definite_callers.some(c => c.qualified_name === 'AdvancedCalculator.Total' && c.resolution_method === 'ast_go_embedded_method'), 'Go embedded struct promoted methods should resolve to embedded method owners');
+
+        const goInterfaceTarget = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND qualified_name = ? AND file_path = ? AND is_deleted = 0")
+          .get(projectId, 'FixedPricer.Price', goFile) as { id: string } | undefined;
+        const goInterfaceCallers = parseToolJson<{ definite_callers: any[] }>(await callTool('find_callers', {
+            symbol_id: goInterfaceTarget?.id,
+            min_confidence: 0.0
+        }));
+        assert(goInterfaceCallers.definite_callers.some(c => c.qualified_name === 'CheckoutInterface' && c.resolution_method === 'ast_go_interface_dispatch'), 'Go interface parameter calls should resolve probable concrete method callers');
 
         const generatedSymbol = db.prepare("SELECT id FROM symbols WHERE project_id = ? AND name = ? AND file_path = ? AND is_deleted = 0")
           .get(projectId, 'GeneratedNoise', goGeneratedFile);
